@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": ".tmp/test-build",
+    "rootDir": "src",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
+    "ignoreDeprecations": "6.0"
+  },
+  "include": [
+    "src/model/**/*.ts",
+    "src/utils/**/*.ts",
+    "src/test/**/*.ts"
+  ]
+}
