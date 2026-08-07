@@ -15,7 +15,7 @@ import {
   type LineData,
   type Time,
 } from 'lightweight-charts';
-import type { Candle, Fill, MarketSymbol, PendingOrder, Position } from '../model/market';
+import { computeMacd, type Candle, type Fill, type MarketSymbol, type PendingOrder, type Position } from '../model/market';
 
 interface ChartPaneProps {
   candles: Candle[];
@@ -41,7 +41,7 @@ function toVolumeData(candles: Candle[]): HistogramData<Time>[] {
   return candles.map((candle) => ({
     time: Math.floor(candle.time / 1000) as Time,
     value: candle.volume,
-    color: candle.close >= candle.open ? 'rgba(34, 197, 94, 0.35)' : 'rgba(239, 68, 68, 0.35)',
+    color: candle.close >= candle.open ? 'rgba(46, 204, 113, 0.28)' : 'rgba(231, 76, 60, 0.28)',
   }));
 }
 
@@ -69,6 +69,9 @@ export function ChartPane({
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const maSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const macdHistRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+  const macdDifRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const macdDeaRef = useRef<ISeriesApi<'Line'> | null>(null);
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const pickRef = useRef(onPickPrice);
@@ -79,58 +82,114 @@ export function ChartPane({
 
     const chart = createChart(containerRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: '#0b0f14' },
-        textColor: '#8b95a7',
-        fontFamily: '"IBM Plex Sans", "PingFang SC", "Microsoft YaHei", sans-serif',
+        background: { type: ColorType.Solid, color: '#0a1018' },
+        textColor: '#9aa6b8',
+        fontFamily: '"Manrope", "Noto Sans SC", "PingFang SC", sans-serif',
+        panes: {
+          separatorColor: 'rgba(245, 158, 11, 0.28)',
+          separatorHoverColor: 'rgba(245, 158, 11, 0.45)',
+        },
       },
       grid: {
-        vertLines: { color: 'rgba(148, 163, 184, 0.08)' },
-        horzLines: { color: 'rgba(148, 163, 184, 0.08)' },
+        vertLines: { color: 'rgba(148, 163, 184, 0.06)' },
+        horzLines: { color: 'rgba(148, 163, 184, 0.06)' },
       },
-      rightPriceScale: { borderColor: 'rgba(148, 163, 184, 0.15)' },
+      rightPriceScale: { borderVisible: false },
       timeScale: {
-        borderColor: 'rgba(148, 163, 184, 0.15)',
+        borderVisible: false,
         timeVisible: true,
         secondsVisible: false,
+        rightOffset: 4,
+        barSpacing: 7,
       },
       crosshair: {
         vertLine: { color: 'rgba(251, 191, 36, 0.35)', labelBackgroundColor: '#f59e0b' },
         horzLine: { color: 'rgba(251, 191, 36, 0.35)', labelBackgroundColor: '#f59e0b' },
+      },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: false,
+      },
+      handleScale: {
+        axisPressedMouseMove: true,
+        pinch: true,
       },
       width: containerRef.current.clientWidth,
       height: containerRef.current.clientHeight,
     });
 
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#22c55e',
-      downColor: '#ef4444',
-      borderUpColor: '#22c55e',
-      borderDownColor: '#ef4444',
-      wickUpColor: '#22c55e',
-      wickDownColor: '#ef4444',
+      upColor: '#2ecc71',
+      downColor: '#e74c3c',
+      borderUpColor: '#2ecc71',
+      borderDownColor: '#e74c3c',
+      wickUpColor: '#2ecc71',
+      wickDownColor: '#e74c3c',
     });
     const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: 'volume' },
       priceScaleId: 'volume',
     });
     chart.priceScale('volume').applyOptions({
-      scaleMargins: { top: 0.78, bottom: 0 },
+      scaleMargins: { top: 0.82, bottom: 0 },
     });
     const maSeries = chart.addSeries(LineSeries, {
-      color: '#60a5fa',
+      color: '#5dade2',
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: false,
+    });
+
+    const macdHist = chart.addSeries(
+      HistogramSeries,
+      {
+        priceFormat: { type: 'price', precision: 4, minMove: 0.0001 },
+        priceScaleId: 'macd',
+      },
+      1,
+    );
+    const macdDif = chart.addSeries(
+      LineSeries,
+      {
+        color: '#f1c40f',
+        lineWidth: 2,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        priceScaleId: 'macd',
+      },
+      1,
+    );
+    const macdDea = chart.addSeries(
+      LineSeries,
+      {
+        color: '#af7ac5',
+        lineWidth: 2,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        priceScaleId: 'macd',
+      },
+      1,
+    );
+
+    chart.panes()[1]?.setHeight(Math.max(96, Math.round(containerRef.current.clientHeight * 0.28)));
+    chart.priceScale('macd', 1).applyOptions({
+      scaleMargins: { top: 0.12, bottom: 0.08 },
+      borderVisible: false,
     });
 
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
     maSeriesRef.current = maSeries;
+    macdHistRef.current = macdHist;
+    macdDifRef.current = macdDif;
+    macdDeaRef.current = macdDea;
     markersRef.current = createSeriesMarkers(candleSeries, []);
 
-    const onClick = (param: { point?: { y: number } }) => {
-      if (!param.point || !candleSeriesRef.current || !pickRef.current) return;
+    const onClick = (param: { point?: { y: number }; paneIndex?: number }) => {
+      if (!param.point || param.paneIndex !== 0 || !candleSeriesRef.current || !pickRef.current) return;
       const price = candleSeriesRef.current.coordinateToPrice(param.point.y);
       if (typeof price === 'number') pickRef.current(price);
     };
@@ -138,10 +197,12 @@ export function ChartPane({
 
     const observer = new ResizeObserver(() => {
       if (!containerRef.current || !chartRef.current) return;
+      const height = containerRef.current.clientHeight;
       chartRef.current.applyOptions({
         width: containerRef.current.clientWidth,
-        height: containerRef.current.clientHeight,
+        height,
       });
+      chartRef.current.panes()[1]?.setHeight(Math.max(96, Math.round(height * 0.28)));
     });
     observer.observe(containerRef.current);
 
@@ -158,11 +219,42 @@ export function ChartPane({
   useEffect(() => {
     const visible = candles.slice(0, playhead + 1);
     const series = candleSeriesRef.current;
-    if (!series || !volumeSeriesRef.current || !maSeriesRef.current || visible.length === 0) return;
+    if (
+      !series ||
+      !volumeSeriesRef.current ||
+      !maSeriesRef.current ||
+      !macdHistRef.current ||
+      !macdDifRef.current ||
+      !macdDeaRef.current ||
+      visible.length === 0
+    ) {
+      return;
+    }
 
     series.setData(toCandleData(visible));
     volumeSeriesRef.current.setData(toVolumeData(visible));
     maSeriesRef.current.setData(movingAverage(visible));
+
+    const macd = computeMacd(visible);
+    macdHistRef.current.setData(
+      macd.map((point) => ({
+        time: Math.floor(point.time / 1000) as Time,
+        value: point.hist,
+        color: point.hist >= 0 ? 'rgba(46, 204, 113, 0.7)' : 'rgba(231, 76, 60, 0.7)',
+      })),
+    );
+    macdDifRef.current.setData(
+      macd.map((point) => ({
+        time: Math.floor(point.time / 1000) as Time,
+        value: point.dif,
+      })),
+    );
+    macdDeaRef.current.setData(
+      macd.map((point) => ({
+        time: Math.floor(point.time / 1000) as Time,
+        value: point.dea,
+      })),
+    );
 
     markersRef.current?.setMarkers(
       fills
@@ -170,9 +262,9 @@ export function ChartPane({
         .map((fill) => ({
           time: Math.floor(fill.time / 1000) as Time,
           position: fill.side === 'buy' ? ('belowBar' as const) : ('aboveBar' as const),
-          color: fill.side === 'buy' ? '#22c55e' : '#ef4444',
+          color: fill.side === 'buy' ? '#2ecc71' : '#e74c3c',
           shape: fill.side === 'buy' ? ('arrowUp' as const) : ('arrowDown' as const),
-          text: fill.side === 'buy' ? `买 ${fill.quantity}` : `卖 ${fill.quantity}`,
+          text: fill.side === 'buy' ? 'B' : 'S',
         })),
     );
 
@@ -193,14 +285,28 @@ export function ChartPane({
     };
 
     addLine(visible.at(-1)!.close, '#f59e0b', symbol.code);
-    if (position.takeProfit != null) addLine(position.takeProfit, '#22c55e', '止盈');
-    if (position.stopLoss != null) addLine(position.stopLoss, '#ef4444', '止损');
+    if (position.takeProfit != null) addLine(position.takeProfit, '#2ecc71', '止盈');
+    if (position.stopLoss != null) addLine(position.stopLoss, '#e74c3c', '止损');
     for (const order of orders) {
-      addLine(order.price, order.side === 'buy' ? '#34d399' : '#f87171', order.type === 'limit' ? '限价' : '止损单');
+      addLine(order.price, order.side === 'buy' ? '#58d68d' : '#f1948a', order.type === 'limit' ? '限价' : '止损单');
     }
 
     chartRef.current?.timeScale().scrollToRealTime();
   }, [candles, playhead, fills, orders, position, symbol.code]);
 
-  return <div className="chart-pane" ref={containerRef} aria-label={`${symbol.name} 回放图表`} />;
+  const latestMacd = computeMacd(candles.slice(0, playhead + 1)).at(-1);
+
+  return (
+    <div className="chart-pane-wrap">
+      <div className="macd-badge" aria-live="polite">
+        <strong>MACD</strong>
+        <span>DIF {latestMacd ? latestMacd.dif.toFixed(2) : '—'}</span>
+        <span>DEA {latestMacd ? latestMacd.dea.toFixed(2) : '—'}</span>
+        <span className={latestMacd && latestMacd.hist >= 0 ? 'up' : 'down'}>
+          HIST {latestMacd ? latestMacd.hist.toFixed(2) : '—'}
+        </span>
+      </div>
+      <div className="chart-pane" ref={containerRef} aria-label={`${symbol.name} 回放图表`} />
+    </div>
+  );
 }

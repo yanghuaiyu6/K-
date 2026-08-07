@@ -324,6 +324,39 @@ export function formatTime(time: number) {
   }).format(time);
 }
 
+export interface MacdPoint {
+  time: number;
+  dif: number;
+  dea: number;
+  hist: number;
+}
+
+function emaSeries(values: number[], period: number) {
+  const result: number[] = [];
+  const multiplier = 2 / (period + 1);
+  let ema = values[0] ?? 0;
+  values.forEach((value, index) => {
+    ema = index === 0 ? value : (value - ema) * multiplier + ema;
+    result.push(ema);
+  });
+  return result;
+}
+
+export function computeMacd(candles: Candle[], fast = 12, slow = 26, signal = 9): MacdPoint[] {
+  if (candles.length === 0) return [];
+  const closes = candles.map((candle) => candle.close);
+  const fastEma = emaSeries(closes, fast);
+  const slowEma = emaSeries(closes, slow);
+  const dif = closes.map((_, index) => fastEma[index] - slowEma[index]);
+  const dea = emaSeries(dif, signal);
+  return candles.map((candle, index) => ({
+    time: candle.time,
+    dif: dif[index],
+    dea: dea[index],
+    hist: (dif[index] - dea[index]) * 2,
+  }));
+}
+
 export interface SessionStats {
   trades: number;
   wins: number;

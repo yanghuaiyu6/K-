@@ -1,6 +1,7 @@
 import { equal } from '../test/assert';
 import {
   applyFill,
+  computeMacd,
   emptyPosition,
   generateMarketData,
   getSymbol,
@@ -73,6 +74,17 @@ export const tests = [
       equal(result.remainingOrders.length, 0);
       equal(result.position.quantity, 1);
       equal(result.fills[0].reason, 'limit');
+    },
+  },
+  {
+    name: 'MACD series matches candle length and produces finite values',
+    run() {
+      const candles = generateMarketData(getSymbol('NAS100'), '5m', 60);
+      const macd = computeMacd(candles);
+      equal(macd.length, candles.length);
+      equal(Number.isFinite(macd.at(-1)!.dif), true);
+      equal(Number.isFinite(macd.at(-1)!.dea), true);
+      equal(Number.isFinite(macd.at(-1)!.hist), true);
     },
   },
 ];
