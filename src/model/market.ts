@@ -1,11 +1,14 @@
 export type Side = 'buy' | 'sell';
+export type OrderType = 'market' | 'limit' | 'stop';
+export type Timeframe = '1m' | '5m' | '15m' | '30m' | '1h';
 
 export interface MarketSymbol {
   code: string;
   name: string;
-  exchange: string;
+  category: string;
   tickSize: number;
-  currency: string;
+  spreadTicks: number;
+  commission: number;
   basePrice: number;
   volatility: number;
 }
@@ -19,59 +22,64 @@ export interface Candle {
   volume: number;
 }
 
-export interface Trade {
-  id: number;
-  side: Side;
-  quantity: number;
-  price: number;
-  time: number;
-  realizedPnl: number;
-}
-
 export interface Position {
   quantity: number;
   averagePrice: number;
   realizedPnl: number;
+  takeProfit: number | null;
+  stopLoss: number | null;
+}
+
+export interface PendingOrder {
+  id: number;
+  side: Side;
+  type: Exclude<OrderType, 'market'>;
+  quantity: number;
+  price: number;
+  takeProfit: number | null;
+  stopLoss: number | null;
+  createdAt: number;
+}
+
+export interface Fill {
+  id: number;
+  side: Side;
+  quantity: number;
+  price: number;
+  fee: number;
+  time: number;
+  realizedPnl: number;
+  reason: 'market' | 'limit' | 'stop' | 'takeProfit' | 'stopLoss' | 'close';
+}
+
+export interface SessionConfig {
+  symbolCode: string;
+  timeframe: Timeframe;
+  startCapital: number;
+  startOffset: number;
+  blindMode: boolean;
 }
 
 export const SYMBOLS: MarketSymbol[] = [
-  {
-    code: 'NQ1!',
-    name: '纳斯达克100 E-mini',
-    exchange: 'CME',
-    tickSize: 0.25,
-    currency: 'USD',
-    basePrice: 18_425,
-    volatility: 22,
-  },
-  {
-    code: 'ES1!',
-    name: '标普500 E-mini',
-    exchange: 'CME',
-    tickSize: 0.25,
-    currency: 'USD',
-    basePrice: 5_286,
-    volatility: 6.8,
-  },
-  {
-    code: 'BTCUSD',
-    name: '比特币 / 美元',
-    exchange: 'COINBASE',
-    tickSize: 0.5,
-    currency: 'USD',
-    basePrice: 67_240,
-    volatility: 94,
-  },
-  {
-    code: 'AAPL',
-    name: '苹果公司',
-    exchange: 'NASDAQ',
-    tickSize: 0.01,
-    currency: 'USD',
-    basePrice: 191.4,
-    volatility: 0.65,
-  },
+  { code: 'EURUSD', name: '欧元 / 美元', category: '外汇', tickSize: 0.0001, spreadTicks: 8, commission: 0.7, basePrice: 1.0842, volatility: 0.00042 },
+  { code: 'GBPUSD', name: '英镑 / 美元', category: '外汇', tickSize: 0.0001, spreadTicks: 10, commission: 0.7, basePrice: 1.2688, volatility: 0.00055 },
+  { code: 'USDJPY', name: '美元 / 日元', category: '外汇', tickSize: 0.001, spreadTicks: 9, commission: 0.7, basePrice: 156.42, volatility: 0.055 },
+  { code: 'XAUUSD', name: '黄金 / 美元', category: '商品', tickSize: 0.1, spreadTicks: 18, commission: 1.2, basePrice: 2348, volatility: 1.8 },
+  { code: 'NAS100', name: '纳斯达克100', category: '指数', tickSize: 0.25, spreadTicks: 4, commission: 1.5, basePrice: 18425, volatility: 18 },
+  { code: 'US500', name: '标普500', category: '指数', tickSize: 0.25, spreadTicks: 4, commission: 1.2, basePrice: 5286, volatility: 5.5 },
+  { code: 'BTCUSD', name: '比特币 / 美元', category: '加密', tickSize: 0.5, spreadTicks: 20, commission: 2.5, basePrice: 67240, volatility: 95 },
+  { code: 'ETHUSD', name: '以太坊 / 美元', category: '加密', tickSize: 0.05, spreadTicks: 20, commission: 2.0, basePrice: 3488, volatility: 18 },
 ];
+
+export const TIMEFRAMES: { id: Timeframe; label: string; minutes: number }[] = [
+  { id: '1m', label: '1分', minutes: 1 },
+  { id: '5m', label: '5分', minutes: 5 },
+  { id: '15m', label: '15分', minutes: 15 },
+  { id: '30m', label: '30分', minutes: 30 },
+  { id: '1h', label: '1时', minutes: 60 },
+];
+
+export const SPEEDS = [0.5, 1, 2, 5, 10, 20, 50] as const;
 
 function hashCode(value: string) {
   return [...value].reduce((hash, character) => ((hash << 5) - hash + character.charCodeAt(0)) | 0, 0);
@@ -85,31 +93,41 @@ function createRandom(seed: number) {
   };
 }
 
-export function generateMarketData(symbol: MarketSymbol, count = 240): Candle[] {
-  const random = createRandom(Math.abs(hashCode(symbol.code)) + 20240520);
+export function roundToTick(price: number, tickSize: number) {
+  return Math.round(price / tickSize) * tickSize;
+}
+
+export function getSymbol(code: string) {
+  return SYMBOLS.find((item) => item.code === code) ?? SYMBOLS[0];
+}
+
+export function generateMarketData(symbol: MarketSymbol, timeframe: Timeframe, count = 420): Candle[] {
+  const minutes = TIMEFRAMES.find((item) => item.id === timeframe)?.minutes ?? 5;
+  const random = createRandom(Math.abs(hashCode(`${symbol.code}-${timeframe}`)) + 20240520);
   const startTime = new Date('2024-05-20T13:30:00.000Z').getTime();
+  const scale = Math.sqrt(minutes / 5);
   const candles: Candle[] = [];
   let previousClose = symbol.basePrice;
 
   for (let index = 0; index < count; index += 1) {
-    const cycle = Math.sin(index / 9) * symbol.volatility * 0.32;
-    const longTrend = Math.sin(index / 42) * symbol.volatility * 0.18;
-    const sessionBias = index < 70 ? 0.11 : index < 135 ? -0.06 : 0.14;
-    const noise = (random() - 0.49) * symbol.volatility;
-    const movement = noise + cycle * 0.18 + longTrend * 0.1 + sessionBias * symbol.volatility;
-    const open = previousClose + (random() - 0.5) * symbol.volatility * 0.24;
+    const cycle = Math.sin(index / 11) * symbol.volatility * 0.35 * scale;
+    const trend = Math.sin(index / 48) * symbol.volatility * 0.22 * scale;
+    const sessionBias = index < 90 ? 0.12 : index < 180 ? -0.08 : 0.15;
+    const noise = (random() - 0.49) * symbol.volatility * scale;
+    const movement = noise + cycle * 0.2 + trend * 0.12 + sessionBias * symbol.volatility * scale * 0.2;
+    const open = previousClose + (random() - 0.5) * symbol.volatility * 0.2 * scale;
     const close = open + movement;
-    const wick = symbol.volatility * (0.18 + random() * 0.55);
+    const wick = symbol.volatility * scale * (0.2 + random() * 0.6);
     const high = Math.max(open, close) + wick * random();
     const low = Math.min(open, close) - wick * random();
-    const volume = Math.round(620 + random() * 1250 + Math.abs(movement) * 21);
+    const volume = Math.round(500 + random() * 1400 + Math.abs(movement) / symbol.tickSize);
 
     candles.push({
-      time: startTime + index * 5 * 60 * 1000,
-      open,
-      high,
-      low,
-      close,
+      time: startTime + index * minutes * 60 * 1000,
+      open: roundToTick(open, symbol.tickSize),
+      high: roundToTick(high, symbol.tickSize),
+      low: roundToTick(low, symbol.tickSize),
+      close: roundToTick(close, symbol.tickSize),
       volume,
     });
     previousClose = close;
@@ -118,40 +136,170 @@ export function generateMarketData(symbol: MarketSymbol, count = 240): Candle[] 
   return candles;
 }
 
-export function executeTrade(position: Position, side: Side, quantity: number, price: number): Position {
-  const signedQuantity = side === 'buy' ? quantity : -quantity;
-  const currentQuantity = position.quantity;
+export function emptyPosition(): Position {
+  return { quantity: 0, averagePrice: 0, realizedPnl: 0, takeProfit: null, stopLoss: null };
+}
 
-  if (currentQuantity === 0 || Math.sign(currentQuantity) === Math.sign(signedQuantity)) {
-    const nextQuantity = currentQuantity + signedQuantity;
-    const weightedCost =
-      Math.abs(currentQuantity) * position.averagePrice + Math.abs(signedQuantity) * price;
-    return {
-      quantity: nextQuantity,
-      averagePrice: weightedCost / Math.abs(nextQuantity),
-      realizedPnl: position.realizedPnl,
-    };
-  }
-
-  const closingQuantity = Math.min(Math.abs(currentQuantity), Math.abs(signedQuantity));
-  const direction = Math.sign(currentQuantity);
-  const realizedPnl = position.realizedPnl + (price - position.averagePrice) * closingQuantity * direction;
-  const nextQuantity = currentQuantity + signedQuantity;
-
+export function marketQuotes(symbol: MarketSymbol, mid: number) {
+  const half = (symbol.spreadTicks * symbol.tickSize) / 2;
   return {
-    quantity: nextQuantity,
-    averagePrice:
-      nextQuantity === 0
-        ? 0
-        : Math.sign(nextQuantity) === Math.sign(currentQuantity)
-          ? position.averagePrice
-          : price,
-    realizedPnl,
+    bid: roundToTick(mid - half, symbol.tickSize),
+    ask: roundToTick(mid + half, symbol.tickSize),
+    spread: roundToTick(half * 2, symbol.tickSize),
   };
 }
 
+export function applyFill(
+  position: Position,
+  side: Side,
+  quantity: number,
+  price: number,
+  fee: number,
+): { position: Position; realizedPnl: number } {
+  const signed = side === 'buy' ? quantity : -quantity;
+  const current = position.quantity;
+
+  if (current === 0 || Math.sign(current) === Math.sign(signed)) {
+    const nextQuantity = current + signed;
+    const averagePrice =
+      (Math.abs(current) * position.averagePrice + Math.abs(signed) * price) / Math.abs(nextQuantity);
+    return {
+      position: {
+        ...position,
+        quantity: nextQuantity,
+        averagePrice,
+        realizedPnl: position.realizedPnl - fee,
+      },
+      realizedPnl: -fee,
+    };
+  }
+
+  const closing = Math.min(Math.abs(current), Math.abs(signed));
+  const direction = Math.sign(current);
+  const tradePnl = (price - position.averagePrice) * closing * direction - fee;
+  const nextQuantity = current + signed;
+
+  return {
+    position: {
+      quantity: nextQuantity,
+      averagePrice:
+        nextQuantity === 0
+          ? 0
+          : Math.sign(nextQuantity) === Math.sign(current)
+            ? position.averagePrice
+            : price,
+      realizedPnl: position.realizedPnl + tradePnl,
+      takeProfit: nextQuantity === 0 ? null : position.takeProfit,
+      stopLoss: nextQuantity === 0 ? null : position.stopLoss,
+    },
+    realizedPnl: tradePnl,
+  };
+}
+
+export function matchPendingOrders(
+  orders: PendingOrder[],
+  candle: Candle,
+  symbol: MarketSymbol,
+  position: Position,
+): {
+  remainingOrders: PendingOrder[];
+  position: Position;
+  fills: Fill[];
+} {
+  let nextPosition = position;
+  const remaining: PendingOrder[] = [];
+  const fills: Fill[] = [];
+
+  for (const order of orders) {
+    const hit =
+      order.type === 'limit'
+        ? order.side === 'buy'
+          ? candle.low <= order.price
+          : candle.high >= order.price
+        : order.side === 'buy'
+          ? candle.high >= order.price
+          : candle.low <= order.price;
+
+    if (!hit) {
+      remaining.push(order);
+      continue;
+    }
+
+    const result = applyFill(nextPosition, order.side, order.quantity, order.price, symbol.commission * order.quantity);
+    nextPosition = {
+      ...result.position,
+      takeProfit: order.takeProfit,
+      stopLoss: order.stopLoss,
+    };
+    fills.push({
+      id: Date.now() + fills.length,
+      side: order.side,
+      quantity: order.quantity,
+      price: order.price,
+      fee: symbol.commission * order.quantity,
+      time: candle.time,
+      realizedPnl: result.realizedPnl,
+      reason: order.type,
+    });
+  }
+
+  return { remainingOrders: remaining, position: nextPosition, fills };
+}
+
+export function matchProtectiveOrders(
+  position: Position,
+  candle: Candle,
+  symbol: MarketSymbol,
+): { position: Position; fills: Fill[] } {
+  if (position.quantity === 0) return { position, fills: [] };
+
+  const fills: Fill[] = [];
+  let next = position;
+  const isLong = position.quantity > 0;
+
+  if (position.stopLoss != null) {
+    const hit = isLong ? candle.low <= position.stopLoss : candle.high >= position.stopLoss;
+    if (hit) {
+      const side: Side = isLong ? 'sell' : 'buy';
+      const result = applyFill(next, side, Math.abs(next.quantity), position.stopLoss, symbol.commission * Math.abs(next.quantity));
+      fills.push({
+        id: Date.now() + 11,
+        side,
+        quantity: Math.abs(position.quantity),
+        price: position.stopLoss,
+        fee: symbol.commission * Math.abs(position.quantity),
+        time: candle.time,
+        realizedPnl: result.realizedPnl,
+        reason: 'stopLoss',
+      });
+      return { position: emptyPosition(), fills };
+    }
+  }
+
+  if (position.takeProfit != null) {
+    const hit = isLong ? candle.high >= position.takeProfit : candle.low <= position.takeProfit;
+    if (hit) {
+      const side: Side = isLong ? 'sell' : 'buy';
+      const result = applyFill(next, side, Math.abs(next.quantity), position.takeProfit, symbol.commission * Math.abs(next.quantity));
+      fills.push({
+        id: Date.now() + 12,
+        side,
+        quantity: Math.abs(position.quantity),
+        price: position.takeProfit,
+        fee: symbol.commission * Math.abs(position.quantity),
+        time: candle.time,
+        realizedPnl: result.realizedPnl,
+        reason: 'takeProfit',
+      });
+      return { position: emptyPosition(), fills };
+    }
+  }
+
+  return { position: next, fills };
+}
+
 export function formatPrice(price: number, symbol: MarketSymbol) {
-  const decimals = symbol.tickSize < 0.1 ? 2 : symbol.tickSize < 1 ? 2 : 0;
+  const decimals = symbol.tickSize >= 1 ? 2 : symbol.tickSize >= 0.1 ? 1 : symbol.tickSize >= 0.01 ? 2 : 4;
   return price.toLocaleString('zh-CN', {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
@@ -166,7 +314,7 @@ export function formatMoney(value: number) {
   }).format(value);
 }
 
-export function formatReplayTime(time: number) {
+export function formatTime(time: number) {
   return new Intl.DateTimeFormat('zh-CN', {
     month: '2-digit',
     day: '2-digit',
@@ -174,4 +322,57 @@ export function formatReplayTime(time: number) {
     minute: '2-digit',
     hour12: false,
   }).format(time);
+}
+
+export interface SessionStats {
+  trades: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  profitFactor: number;
+  netPnl: number;
+  maxDrawdown: number;
+  grossProfit: number;
+  grossLoss: number;
+}
+
+export function computeStats(fills: Fill[], startCapital: number): SessionStats {
+  let equity = startCapital;
+  let peak = startCapital;
+  let maxDrawdown = 0;
+  let grossProfit = 0;
+  let grossLoss = 0;
+  let wins = 0;
+  let losses = 0;
+
+  for (const fill of [...fills].reverse()) {
+    equity += fill.realizedPnl;
+    peak = Math.max(peak, equity);
+    maxDrawdown = Math.max(maxDrawdown, peak - equity);
+
+    const isExit =
+      fill.reason === 'close' || fill.reason === 'takeProfit' || fill.reason === 'stopLoss';
+    if (!isExit) continue;
+
+    if (fill.realizedPnl > 0) {
+      wins += 1;
+      grossProfit += fill.realizedPnl;
+    } else if (fill.realizedPnl < 0) {
+      losses += 1;
+      grossLoss += Math.abs(fill.realizedPnl);
+    }
+  }
+
+  const trades = wins + losses;
+  return {
+    trades,
+    wins,
+    losses,
+    winRate: trades === 0 ? 0 : wins / trades,
+    profitFactor: grossLoss === 0 ? (grossProfit > 0 ? Infinity : 0) : grossProfit / grossLoss,
+    netPnl: equity - startCapital,
+    maxDrawdown,
+    grossProfit,
+    grossLoss,
+  };
 }

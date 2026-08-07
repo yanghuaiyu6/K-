@@ -1,164 +1,223 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   BarChart3,
-  Bell,
-  BookOpen,
-  CalendarDays,
-  ChevronDown,
-  CircleHelp,
-  Clock3,
-  Gauge,
-  History,
-  LayoutDashboard,
-  ListFilter,
-  Minus,
-  Moon,
-  MoreHorizontal,
+  Crosshair,
   Pause,
   Play,
-  Plus,
   RotateCcw,
-  Search,
-  Settings,
   SkipBack,
   SkipForward,
-  Sparkles,
   StepBack,
   StepForward,
   Target,
   TrendingUp,
-  UserRound,
-  WalletCards,
   X,
   Zap,
 } from 'lucide-react';
-import { TradingChart } from './components/TradingChart';
+import { ChartPane } from './components/ChartPane';
 import {
-  executeTrade,
+  SPEEDS,
+  SYMBOLS,
+  TIMEFRAMES,
+  applyFill,
+  computeStats,
+  emptyPosition,
   formatMoney,
   formatPrice,
-  formatReplayTime,
+  formatTime,
   generateMarketData,
-  SYMBOLS,
+  getSymbol,
+  marketQuotes,
+  matchPendingOrders,
+  matchProtectiveOrders,
+  roundToTick,
+  type Fill,
   type MarketSymbol,
+  type OrderType,
+  type PendingOrder,
   type Position,
+  type SessionConfig,
   type Side,
-  type Trade,
+  type Timeframe,
 } from './model/market';
 import './styles.css';
 
-type BottomTab = 'positions' | 'orders' | 'history';
-type OrderType = 'market' | 'limit' | 'stop';
+type Screen = 'setup' | 'practice' | 'report';
+type BottomTab = 'positions' | 'orders' | 'fills';
 
-interface PendingOrder {
-  id: number;
-  side: Side;
-  quantity: number;
-  type: OrderType;
-  price: number;
-  createdAt: number;
-}
+const DEFAULT_CONFIG: SessionConfig = {
+  symbolCode: 'NAS100',
+  timeframe: '5m',
+  startCapital: 100_000,
+  startOffset: 80,
+  blindMode: false,
+};
 
-const INITIAL_PLAYHEAD = 88;
-const INITIAL_POSITION: Position = { quantity: 0, averagePrice: 0, realizedPnl: 0 };
-
-const NAV_ITEMS = [
-  { icon: LayoutDashboard, label: '交易台', active: true },
-  { icon: BarChart3, label: '复盘报告' },
-  { icon: CalendarDays, label: '交易日历' },
-  { icon: BookOpen, label: '交易日志' },
-];
-
-function MetricCard({
-  label,
-  value,
-  note,
-  accent,
-}: {
-  label: string;
-  value: string;
-  note: string;
-  accent?: boolean;
-}) {
+function Stat({ label, value, tone }: { label: string; value: string; tone?: 'up' | 'down' }) {
   return (
-    <div className="metric-card">
-      <div className="metric-label">
-        {label}
-        <CircleHelp size={13} />
-      </div>
-      <strong className={accent ? 'up-text' : undefined}>{value}</strong>
-      <span>{note}</span>
+    <div className="stat-chip">
+      <span>{label}</span>
+      <strong className={tone === 'up' ? 'up' : tone === 'down' ? 'down' : undefined}>{value}</strong>
     </div>
   );
 }
 
 export default function App() {
-  const [symbol, setSymbol] = useState<MarketSymbol>(SYMBOLS[0]);
-  const candles = useMemo(() => generateMarketData(symbol), [symbol]);
-  const [playhead, setPlayhead] = useState(INITIAL_PLAYHEAD);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [speed, setSpeed] = useState(1);
-  const [quantity, setQuantity] = useState(1);
-  const [orderType, setOrderType] = useState<OrderType>('market');
-  const [limitPrice, setLimitPrice] = useState('');
-  const [position, setPosition] = useState<Position>(INITIAL_POSITION);
-  const [trades, setTrades] = useState<Trade[]>([]);
-  const [orders, setOrders] = useState<PendingOrder[]>([]);
-  const [bottomTab, setBottomTab] = useState<BottomTab>('positions');
-  const [symbolMenuOpen, setSymbolMenuOpen] = useState(false);
-  const [toast, setToast] = useState('');
-  const [riskEnabled, setRiskEnabled] = useState(false);
+  const [screen, setScreen] = useState<Screen>('setup');
+  const [config, setConfig] = useState<SessionConfig>(DEFAULT_CONFIG);
+  const symbol = useMemo(() => getSymbol(config.symbolCode), [config.symbolCode]);
+  const candles = useMemo(
+    () => generateMarketData(symbol, config.timeframe),
+    [symbol, config.timeframe],
+  );
 
-  const currentCandle = candles[playhead];
-  const previousCandle = candles[Math.max(0, playhead - 1)];
-  const priceChange = currentCandle.close - previousCandle.close;
-  const priceChangePercent = (priceChange / previousCandle.close) * 100;
-  const unrealizedPnl =
+  const [playhead, setPlayhead] = useState(config.startOffset);
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const [orderType, setOrderType] = useState<OrderType>('market');
+  const [quantity, setQuantity] = useState(1);
+  const [leverage, setLeverage] = useState(5);
+  const [limitPrice, setLimitPrice] = useState('');
+  const [takeProfit, setTakeProfit] = useState('');
+  const [stopLoss, setStopLoss] = useState('');
+  const [position, setPosition] = useState<Position>(emptyPosition());
+  const [orders, setOrders] = useState<PendingOrder[]>([]);
+  const [fills, setFills] = useState<Fill[]>([]);
+  const [tab, setTab] = useState<BottomTab>('positions');
+  const [toast, setToast] = useState('');
+  const [pickMode, setPickMode] = useState<'tp' | 'sl' | 'limit' | null>(null);
+
+  const current = candles[playhead] ?? candles[0];
+  const quotes = marketQuotes(symbol, current.close);
+  const unrealized =
     position.quantity === 0
       ? 0
-      : (currentCandle.close - position.averagePrice) * position.quantity;
-  const totalPnl = position.realizedPnl + unrealizedPnl;
-  const equity = 100_000 + totalPnl;
-  const progress = (playhead / (candles.length - 1)) * 100;
+      : (current.close - position.averagePrice) * position.quantity;
+  const equity = config.startCapital + position.realizedPnl + unrealized;
+  const progress = (playhead / Math.max(1, candles.length - 1)) * 100;
+  const displaySymbol = config.blindMode ? 'BLIND' : symbol.code;
+  const stats = useMemo(() => computeStats(fills, config.startCapital), [fills, config.startCapital]);
+
+  const resetTradingState = (nextConfig = config) => {
+    setPlayhead(nextConfig.startOffset);
+    setPlaying(false);
+    setPosition(emptyPosition());
+    setOrders([]);
+    setFills([]);
+    setLimitPrice('');
+    setTakeProfit('');
+    setStopLoss('');
+    setPickMode(null);
+    setTab('positions');
+  };
+
+  const startSession = () => {
+    resetTradingState(config);
+    setScreen('practice');
+    setToast('练习会话已开始，按空格播放/暂停');
+  };
+
+  const endSession = () => {
+    setPlaying(false);
+    setScreen('report');
+  };
 
   useEffect(() => {
-    if (!isPlaying) return undefined;
+    if (!playing || screen !== 'practice') return undefined;
     const timer = window.setInterval(() => {
-      setPlayhead((current) => {
-        if (current >= candles.length - 1) {
-          setIsPlaying(false);
-          return current;
+      setPlayhead((value) => {
+        if (value >= candles.length - 1) {
+          setPlaying(false);
+          return value;
         }
-        return current + 1;
+        return value + 1;
       });
-    }, Math.max(120, 900 / speed));
+    }, Math.max(40, 700 / speed));
     return () => window.clearInterval(timer);
-  }, [isPlaying, speed, candles.length]);
+  }, [playing, speed, candles.length, screen]);
+
+  useEffect(() => {
+    if (screen !== 'practice') return;
+    const candle = candles[playhead];
+    if (!candle) return;
+
+    setOrders((currentOrders) => {
+      const matched = matchPendingOrders(currentOrders, candle, symbol, position);
+      if (matched.fills.length > 0) {
+        setPosition(matched.position);
+        setFills((currentFills) => [...matched.fills, ...currentFills]);
+        setToast(`委托成交 ${matched.fills.length} 笔`);
+      }
+      return matched.remainingOrders;
+    });
+  }, [playhead]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (screen !== 'practice') return;
+    const candle = candles[playhead];
+    if (!candle || position.quantity === 0) return;
+    const protective = matchProtectiveOrders(position, candle, symbol);
+    if (protective.fills.length > 0) {
+      setPosition(protective.position);
+      setFills((currentFills) => [...protective.fills, ...currentFills]);
+      setToast(protective.fills[0].reason === 'takeProfit' ? '止盈已触发' : '止损已触发');
+      setTab('fills');
+    }
+  }, [playhead, position.quantity, position.takeProfit, position.stopLoss]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!toast) return undefined;
-    const timer = window.setTimeout(() => setToast(''), 2400);
+    const timer = window.setTimeout(() => setToast(''), 2200);
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  const resetSession = (nextSymbol = symbol) => {
-    setSymbol(nextSymbol);
-    setPlayhead(INITIAL_PLAYHEAD);
-    setIsPlaying(false);
-    setPosition(INITIAL_POSITION);
-    setTrades([]);
-    setOrders([]);
-    setLimitPrice('');
+  useEffect(() => {
+    if (screen !== 'practice') return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      const tag = (event.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (event.code === 'Space') {
+        event.preventDefault();
+        setPlaying((value) => !value);
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        setPlaying(false);
+        setPlayhead((value) => Math.min(candles.length - 1, value + 1));
+      } else if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        setPlaying(false);
+        setPlayhead((value) => Math.max(0, value - 1));
+      } else if (event.key.toLowerCase() === 'b') {
+        placeOrder('buy');
+      } else if (event.key.toLowerCase() === 's') {
+        placeOrder('sell');
+      } else if (event.key.toLowerCase() === 'x') {
+        closePosition();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
+  const parseOptional = (value: string) => {
+    if (!value.trim()) return null;
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? roundToTick(number, symbol.tickSize) : null;
   };
 
-  const placeOrder = (side: Side, orderQuantity = quantity) => {
-    const spread = symbol.tickSize;
-    const marketPrice =
-      currentCandle.close + (side === 'buy' ? spread : -spread);
-    const requestedPrice = Number(limitPrice);
+  const placeOrder = (side: Side) => {
+    const tp = parseOptional(takeProfit);
+    const sl = parseOptional(stopLoss);
+    const price =
+      orderType === 'market'
+        ? side === 'buy'
+          ? quotes.ask
+          : quotes.bid
+        : Number(limitPrice);
 
-    if (orderType !== 'market' && (!Number.isFinite(requestedPrice) || requestedPrice <= 0)) {
-      setToast('请输入有效的委托价格');
+    if (orderType !== 'market' && (!Number.isFinite(price) || price <= 0)) {
+      setToast('请输入有效委托价格，或点击图表选价');
+      setPickMode('limit');
       return;
     }
 
@@ -166,452 +225,442 @@ export default function App() {
       const order: PendingOrder = {
         id: Date.now(),
         side,
-        quantity: orderQuantity,
         type: orderType,
-        price: requestedPrice,
-        createdAt: currentCandle.time,
+        quantity,
+        price,
+        takeProfit: tp,
+        stopLoss: sl,
+        createdAt: current.time,
       };
-      setOrders((current) => [order, ...current]);
-      setBottomTab('orders');
+      setOrders((currentOrders) => [order, ...currentOrders]);
+      setTab('orders');
       setToast(`${side === 'buy' ? '买入' : '卖出'}委托已挂单`);
       return;
     }
 
-    const nextPosition = executeTrade(position, side, orderQuantity, marketPrice);
-    const trade: Trade = {
+    const result = applyFill(position, side, quantity, price, symbol.commission * quantity);
+    const fill: Fill = {
       id: Date.now(),
       side,
-      quantity: orderQuantity,
-      price: marketPrice,
-      time: currentCandle.time,
-      realizedPnl: nextPosition.realizedPnl - position.realizedPnl,
+      quantity,
+      price,
+      fee: symbol.commission * quantity,
+      time: current.time,
+      realizedPnl: result.realizedPnl,
+      reason: 'market',
     };
-    setPosition(nextPosition);
-    setTrades((current) => [trade, ...current]);
-    setToast(
-      `${side === 'buy' ? '买入' : '卖出'} ${orderQuantity} 手 @ ${formatPrice(marketPrice, symbol)}`,
-    );
+    setPosition({
+      ...result.position,
+      takeProfit: tp ?? result.position.takeProfit,
+      stopLoss: sl ?? result.position.stopLoss,
+    });
+    setFills((currentFills) => [fill, ...currentFills]);
+    setTab('positions');
+    setToast(`${side === 'buy' ? '买入' : '卖出'} ${quantity} 手 @ ${formatPrice(price, symbol)}`);
   };
 
   const closePosition = () => {
     if (position.quantity === 0) return;
-    placeOrder(position.quantity > 0 ? 'sell' : 'buy', Math.abs(position.quantity));
+    const side: Side = position.quantity > 0 ? 'sell' : 'buy';
+    const qty = Math.abs(position.quantity);
+    const price = side === 'buy' ? quotes.ask : quotes.bid;
+    const result = applyFill(position, side, qty, price, symbol.commission * qty);
+    setPosition(emptyPosition());
+    setFills((currentFills) => [
+      {
+        id: Date.now(),
+        side,
+        quantity: qty,
+        price,
+        fee: symbol.commission * qty,
+        time: current.time,
+        realizedPnl: result.realizedPnl,
+        reason: 'close',
+      },
+      ...currentFills,
+    ]);
+    setToast('持仓已市价平仓');
   };
 
-  const cancelOrder = (id: number) => {
-    setOrders((current) => current.filter((order) => order.id !== id));
-    setToast('委托已撤销');
+  const onPickPrice = (price: number) => {
+    const rounded = roundToTick(price, symbol.tickSize);
+    if (pickMode === 'tp') setTakeProfit(String(rounded));
+    else if (pickMode === 'sl') setStopLoss(String(rounded));
+    else if (pickMode === 'limit') setLimitPrice(String(rounded));
+    else setLimitPrice(String(rounded));
+    setPickMode(null);
+    setToast(`已选价格 ${formatPrice(rounded, symbol)}`);
   };
 
-  return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand-mark" aria-label="复盘交易室">
-          <TrendingUp size={22} strokeWidth={2.6} />
-        </div>
-        <nav className="side-nav" aria-label="主导航">
-          {NAV_ITEMS.map(({ icon: Icon, label, active }) => (
-            <button key={label} className={active ? 'active' : ''} title={label} aria-label={label}>
-              <Icon size={19} />
-              <span>{label}</span>
-            </button>
-          ))}
-        </nav>
-        <div className="side-bottom">
-          <button title="帮助中心" aria-label="帮助中心"><CircleHelp size={19} /></button>
-          <button title="设置" aria-label="设置"><Settings size={19} /></button>
-          <button className="avatar-button" title="个人中心" aria-label="个人中心">林</button>
-        </div>
-      </aside>
-
-      <main className="main-area">
-        <header className="topbar">
-          <div className="product-name">
-            <span>复盘交易室</span>
-            <em>REPLAY TRADER</em>
+  if (screen === 'setup') {
+    return (
+      <div className="setup-shell">
+        <header className="setup-hero">
+          <div className="brand">
+            <span className="brand-mark"><TrendingUp size={18} /></span>
+            <div>
+              <strong>ReplayTrader</strong>
+              <em>中文复盘交易室</em>
+            </div>
           </div>
-          <div className="topbar-center">
-            <span className="simulation-pill"><span /> 模拟回放</span>
-            <span className="session-date">
-              <CalendarDays size={14} />
-              2024年5月20日 · 美股常规时段
+          <p>选择市场、日期节奏与本金，按 K 线逐根回放真实交易决策。</p>
+        </header>
+
+        <section className="setup-card">
+          <h1>新建练习会话</h1>
+          <p className="setup-copy">像原版一样：先选品种，再设置周期，然后开始回放交易。</p>
+
+          <label>
+            <span>交易品种</span>
+            <select
+              value={config.symbolCode}
+              onChange={(event) => setConfig((value) => ({ ...value, symbolCode: event.target.value }))}
+            >
+              {SYMBOLS.map((item) => (
+                <option key={item.code} value={item.code}>
+                  {item.category} · {item.code} · {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            <span>时间周期</span>
+            <div className="chip-row">
+              {TIMEFRAMES.map((item) => (
+                <button
+                  key={item.id}
+                  className={config.timeframe === item.id ? 'active' : ''}
+                  onClick={() => setConfig((value) => ({ ...value, timeframe: item.id }))}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </label>
+
+          <label>
+            <span>起始资金</span>
+            <select
+              value={config.startCapital}
+              onChange={(event) =>
+                setConfig((value) => ({ ...value, startCapital: Number(event.target.value) }))
+              }
+            >
+              {[25_000, 50_000, 100_000, 200_000].map((amount) => (
+                <option key={amount} value={amount}>{formatMoney(amount)}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="toggle-row">
+            <span>
+              <strong>盲盒模式</strong>
+              <small>隐藏品种名称，专注价格行为</small>
             </span>
+            <button
+              className={config.blindMode ? 'switch on' : 'switch'}
+              onClick={() => setConfig((value) => ({ ...value, blindMode: !value.blindMode }))}
+              aria-label="切换盲盒模式"
+            >
+              <i />
+            </button>
+          </label>
+
+          <div className="setup-preview">
+            <div><span>点差</span><strong>{formatPrice(symbol.spreadTicks * symbol.tickSize, symbol)}</strong></div>
+            <div><span>手续费</span><strong>{formatMoney(symbol.commission)} / 手</strong></div>
+            <div><span>起始位置</span><strong>第 {config.startOffset + 1} 根 K 线</strong></div>
           </div>
-          <div className="topbar-actions">
-            <button aria-label="切换主题"><Moon size={17} /></button>
-            <button aria-label="通知" className="notification-button">
-              <Bell size={17} /><span />
+
+          <button className="primary-cta" onClick={startSession}>
+            <Play size={18} fill="currentColor" /> 开始回放交易
+          </button>
+        </section>
+      </div>
+    );
+  }
+
+  if (screen === 'report') {
+    return (
+      <div className="report-shell">
+        <header>
+          <div>
+            <p className="eyebrow">会话复盘报告</p>
+            <h1>{displaySymbol} · {TIMEFRAMES.find((item) => item.id === config.timeframe)?.label}</h1>
+          </div>
+          <div className="report-actions">
+            <button onClick={() => { resetTradingState(); setScreen('practice'); }}>
+              <RotateCcw size={15} /> 再练一次
             </button>
-            <button className="account-menu">
-              <UserRound size={16} />
-              模拟账户
-              <ChevronDown size={14} />
-            </button>
+            <button className="primary" onClick={() => setScreen('setup')}>新建会话</button>
           </div>
         </header>
 
-        <section className="dashboard">
-          <div className="page-heading">
-            <div>
-              <p className="eyebrow">历史行情训练</p>
-              <h1>交易回放台</h1>
-              <p>像真实市场一样练习，在每一次决策中进步。</p>
+        <section className="report-grid">
+          <Stat label="净盈亏" value={formatMoney(stats.netPnl)} tone={stats.netPnl >= 0 ? 'up' : 'down'} />
+          <Stat label="胜率" value={`${(stats.winRate * 100).toFixed(1)}%`} />
+          <Stat label="获利因子" value={Number.isFinite(stats.profitFactor) ? stats.profitFactor.toFixed(2) : '∞'} />
+          <Stat label="最大回撤" value={formatMoney(stats.maxDrawdown)} tone="down" />
+          <Stat label="平仓笔数" value={String(stats.trades)} />
+          <Stat label="账户权益" value={formatMoney(config.startCapital + stats.netPnl)} />
+        </section>
+
+        <section className="report-table">
+          <h2>成交明细</h2>
+          {fills.length === 0 ? (
+            <div className="empty">本次会话没有成交记录</div>
+          ) : (
+            <div className="table">
+              {fills.map((fill) => (
+                <div key={fill.id} className="row">
+                  <span>{formatTime(fill.time)}</span>
+                  <span className={fill.side === 'buy' ? 'up' : 'down'}>{fill.side === 'buy' ? '买' : '卖'}</span>
+                  <span>{fill.quantity} 手</span>
+                  <span>{formatPrice(fill.price, symbol)}</span>
+                  <span className={fill.realizedPnl >= 0 ? 'up' : 'down'}>{formatMoney(fill.realizedPnl)}</span>
+                  <span>{fill.reason}</span>
+                </div>
+              ))}
             </div>
-            <div className="heading-actions">
-              <button className="ghost-button"><History size={15} /> 回放记录</button>
-              <button className="primary-button" onClick={() => resetSession()}>
-                <RotateCcw size={15} /> 重置本次回放
-              </button>
+          )}
+        </section>
+      </div>
+    );
+  }
+
+  return (
+    <div className="practice-shell">
+      <header className="topbar">
+        <div className="brand compact">
+          <span className="brand-mark"><TrendingUp size={16} /></span>
+          <strong>ReplayTrader</strong>
+          <em>中文版</em>
+        </div>
+        <div className="session-meta">
+          <strong>{displaySymbol}</strong>
+          <span>{symbol.category}</span>
+          <span>{TIMEFRAMES.find((item) => item.id === config.timeframe)?.label}</span>
+          <span>{formatTime(current.time)}</span>
+        </div>
+        <div className="equity-strip">
+          <Stat label="权益" value={formatMoney(equity)} />
+          <Stat label="浮动" value={formatMoney(unrealized)} tone={unrealized >= 0 ? 'up' : 'down'} />
+          <Stat label="已实现" value={formatMoney(position.realizedPnl)} tone={position.realizedPnl >= 0 ? 'up' : 'down'} />
+        </div>
+        <button className="end-btn" onClick={endSession}><X size={14} /> 结束会话</button>
+      </header>
+
+      <div className="workspace">
+        <aside className="tool-rail" aria-label="图表工具">
+          <button className={pickMode === null ? 'active' : ''} onClick={() => setPickMode(null)} title="十字光标">
+            <Crosshair size={16} />
+          </button>
+          <button className={pickMode === 'limit' ? 'active' : ''} onClick={() => setPickMode('limit')} title="点击图表选委托价">
+            <Target size={16} />
+          </button>
+          <button className={pickMode === 'tp' ? 'active' : ''} onClick={() => setPickMode('tp')} title="点击图表设止盈">
+            <TrendingUp size={16} />
+          </button>
+          <button className={pickMode === 'sl' ? 'active' : ''} onClick={() => setPickMode('sl')} title="点击图表设止损">
+            <BarChart3 size={16} />
+          </button>
+        </aside>
+
+        <section className="chart-stage">
+          <div className="chart-toolbar">
+            <div className="tf-row">
+              {TIMEFRAMES.map((item) => (
+                <button
+                  key={item.id}
+                  className={config.timeframe === item.id ? 'active' : ''}
+                  onClick={() => {
+                    setConfig((value) => ({ ...value, timeframe: item.id as Timeframe }));
+                    setPlaying(false);
+                  }}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+            <div className="quote-inline">
+              <span className="up">买 {formatPrice(quotes.bid, symbol)}</span>
+              <span>点差 {formatPrice(quotes.spread, symbol)}</span>
+              <span className="down">卖 {formatPrice(quotes.ask, symbol)}</span>
             </div>
           </div>
 
-          <section className="metrics-grid" aria-label="账户概览">
-            <MetricCard label="账户权益" value={formatMoney(equity)} note="初始资金 $100,000.00" />
-            <MetricCard
-              label="本次盈亏"
-              value={`${totalPnl >= 0 ? '+' : ''}${formatMoney(totalPnl)}`}
-              note={`${trades.length} 笔成交`}
-              accent={totalPnl >= 0}
-            />
-            <MetricCard
-              label="已实现盈亏"
-              value={`${position.realizedPnl >= 0 ? '+' : ''}${formatMoney(position.realizedPnl)}`}
-              note="不含当前持仓"
-              accent={position.realizedPnl >= 0}
-            />
-            <div className="metric-card progress-card">
-              <div className="metric-label">回放进度 <span>{Math.round(progress)}%</span></div>
-              <strong>{formatReplayTime(currentCandle.time)}</strong>
-              <div className="mini-progress"><i style={{ width: `${progress}%` }} /></div>
+          <ChartPane
+            candles={candles}
+            playhead={playhead}
+            symbol={symbol}
+            fills={fills}
+            orders={orders}
+            position={position}
+            onPickPrice={onPickPrice}
+          />
+
+          <div className="replay-bar">
+            <div className="scrubber">
+              <input
+                type="range"
+                min={0}
+                max={candles.length - 1}
+                value={playhead}
+                onChange={(event) => {
+                  setPlaying(false);
+                  setPlayhead(Number(event.target.value));
+                }}
+              />
+              <span>{Math.round(progress)}%</span>
             </div>
-          </section>
-
-          <section className="trading-workspace">
-            <div className="chart-panel">
-              <div className="instrument-toolbar">
-                <div className="symbol-picker-wrap">
-                  <button
-                    className="symbol-picker"
-                    onClick={() => setSymbolMenuOpen((open) => !open)}
-                    aria-expanded={symbolMenuOpen}
-                  >
-                    <span className="symbol-badge">{symbol.code.slice(0, 2)}</span>
-                    <span>
-                      <strong>{symbol.code}</strong>
-                      <small>{symbol.name}</small>
-                    </span>
-                    <ChevronDown size={15} />
-                  </button>
-                  {symbolMenuOpen && (
-                    <div className="symbol-menu">
-                      <div className="symbol-search"><Search size={14} /> 搜索品种</div>
-                      {SYMBOLS.map((item) => (
-                        <button
-                          key={item.code}
-                          className={item.code === symbol.code ? 'selected' : ''}
-                          onClick={() => {
-                            resetSession(item);
-                            setSymbolMenuOpen(false);
-                          }}
-                        >
-                          <span><strong>{item.code}</strong><small>{item.exchange}</small></span>
-                          <em>{item.name}</em>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div className="timeframe-list">
-                  {['1分', '5分', '15分', '1时', '4时', '日线'].map((item) => (
-                    <button key={item} className={item === '5分' ? 'active' : ''}>{item}</button>
-                  ))}
-                </div>
-                <div className="chart-tools">
-                  <button><ListFilter size={15} /> 指标</button>
-                  <button aria-label="更多设置"><MoreHorizontal size={18} /></button>
-                </div>
-              </div>
-
-              <div className="price-summary">
-                <div>
-                  <strong>{formatPrice(currentCandle.close, symbol)}</strong>
-                  <span className={priceChange >= 0 ? 'up-badge' : 'down-badge'}>
-                    {priceChange >= 0 ? '+' : ''}{formatPrice(priceChange, symbol)}
-                    {' '}({priceChangePercent >= 0 ? '+' : ''}{priceChangePercent.toFixed(2)}%)
-                  </span>
-                </div>
-                <span>数据为本地生成，仅用于交易练习</span>
-              </div>
-
-              <TradingChart candles={candles} playhead={playhead} symbol={symbol} trades={trades} />
-
-              <div className="replay-controls">
-                <div className="timeline">
-                  <span style={{ width: `${progress}%` }} />
-                  <i style={{ left: `${progress}%` }} />
-                </div>
-                <div className="control-inner">
-                  <div className="replay-status">
-                    <span className={isPlaying ? 'pulse-dot playing' : 'pulse-dot'} />
-                    <div>
-                      <strong>{isPlaying ? '正在回放' : '回放已暂停'}</strong>
-                      <small>{formatReplayTime(currentCandle.time)}</small>
-                    </div>
-                  </div>
-                  <div className="transport">
-                    <button onClick={() => setPlayhead(0)} aria-label="回到开始"><SkipBack size={17} /></button>
-                    <button
-                      onClick={() => setPlayhead((current) => Math.max(0, current - 1))}
-                      aria-label="后退一根K线"
-                    ><StepBack size={18} /></button>
-                    <button
-                      className="play-button"
-                      onClick={() => setIsPlaying((playing) => !playing)}
-                      aria-label={isPlaying ? '暂停' : '播放'}
-                    >
-                      {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
-                    </button>
-                    <button
-                      onClick={() => setPlayhead((current) => Math.min(candles.length - 1, current + 1))}
-                      aria-label="前进一根K线"
-                    ><StepForward size={18} /></button>
-                    <button onClick={() => setPlayhead(candles.length - 1)} aria-label="跳到最后">
-                      <SkipForward size={17} />
-                    </button>
-                  </div>
-                  <div className="speed-control">
-                    <Clock3 size={14} />
-                    <span>速度</span>
-                    {[0.5, 1, 2, 4].map((item) => (
-                      <button
-                        key={item}
-                        className={speed === item ? 'active' : ''}
-                        onClick={() => setSpeed(item)}
-                      >{item}x</button>
-                    ))}
-                  </div>
-                </div>
-              </div>
+            <div className="transport">
+              <button onClick={() => setPlayhead(0)} aria-label="回到开始"><SkipBack size={16} /></button>
+              <button onClick={() => setPlayhead((value) => Math.max(0, value - 1))} aria-label="后退"><StepBack size={16} /></button>
+              <button className="play" onClick={() => setPlaying((value) => !value)} aria-label="播放暂停">
+                {playing ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}
+              </button>
+              <button onClick={() => setPlayhead((value) => Math.min(candles.length - 1, value + 1))} aria-label="前进"><StepForward size={16} /></button>
+              <button onClick={() => setPlayhead(candles.length - 1)} aria-label="跳到最后"><SkipForward size={16} /></button>
             </div>
-
-            <aside className="order-panel">
-              <div className="order-panel-heading">
-                <div><Zap size={17} /><strong>模拟下单</strong></div>
-                <button aria-label="下单设置"><Settings size={16} /></button>
-              </div>
-              <div className="order-tabs">
-                {([
-                  ['market', '市价'],
-                  ['limit', '限价'],
-                  ['stop', '止损'],
-                ] as [OrderType, string][]).map(([value, label]) => (
-                  <button
-                    key={value}
-                    className={orderType === value ? 'active' : ''}
-                    onClick={() => setOrderType(value)}
-                  >{label}</button>
-                ))}
-              </div>
-
-              <div className="quote-strip">
-                <div>
-                  <span>买一</span>
-                  <strong className="up-text">{formatPrice(currentCandle.close - symbol.tickSize, symbol)}</strong>
-                </div>
-                <div className="spread">
-                  <span>点差</span>
-                  <strong>{formatPrice(symbol.tickSize * 2, symbol)}</strong>
-                </div>
-                <div>
-                  <span>卖一</span>
-                  <strong className="down-text">{formatPrice(currentCandle.close + symbol.tickSize, symbol)}</strong>
-                </div>
-              </div>
-
-              <label className="order-field">
-                <span>下单数量 <em>单位：手</em></span>
-                <div className="stepper">
-                  <button onClick={() => setQuantity((value) => Math.max(1, value - 1))}><Minus size={15} /></button>
-                  <input
-                    value={quantity}
-                    onChange={(event) => setQuantity(Math.max(1, Number(event.target.value) || 1))}
-                    inputMode="numeric"
-                  />
-                  <button onClick={() => setQuantity((value) => Math.min(100, value + 1))}><Plus size={15} /></button>
-                </div>
-              </label>
-
-              {orderType !== 'market' && (
-                <label className="order-field">
-                  <span>{orderType === 'limit' ? '限价价格' : '触发价格'}</span>
-                  <div className="price-input">
-                    <input
-                      value={limitPrice}
-                      onChange={(event) => setLimitPrice(event.target.value)}
-                      placeholder={formatPrice(currentCandle.close, symbol)}
-                      inputMode="decimal"
-                    />
-                    <em>USD</em>
-                  </div>
-                </label>
-              )}
-
-              <div className="risk-switch">
-                <button
-                  className={riskEnabled ? 'switch on' : 'switch'}
-                  onClick={() => setRiskEnabled((enabled) => !enabled)}
-                  aria-label="启用止盈止损"
-                ><span /></button>
-                <div><strong>预设止盈 / 止损</strong><small>成交后自动创建保护单</small></div>
-              </div>
-
-              {riskEnabled && (
-                <div className="risk-inputs">
-                  <label><span>止盈</span><input defaultValue="80" /><em>点</em></label>
-                  <label><span>止损</span><input defaultValue="35" /><em>点</em></label>
-                </div>
-              )}
-
-              <div className="order-buttons">
-                <button className="buy-button" onClick={() => placeOrder('buy')}>
-                  <span>买入 / 做多</span>
-                  <strong>{formatPrice(currentCandle.close + symbol.tickSize, symbol)}</strong>
-                  <small>{orderType === 'market' ? '即时成交' : '提交委托'}</small>
+            <div className="speed-row">
+              {SPEEDS.map((item) => (
+                <button key={item} className={speed === item ? 'active' : ''} onClick={() => setSpeed(item)}>
+                  {item}x
                 </button>
-                <button className="sell-button" onClick={() => placeOrder('sell')}>
-                  <span>卖出 / 做空</span>
-                  <strong>{formatPrice(currentCandle.close - symbol.tickSize, symbol)}</strong>
-                  <small>{orderType === 'market' ? '即时成交' : '提交委托'}</small>
-                </button>
-              </div>
-
-              <div className="estimated-order">
-                <div><span>预估名义价值</span><strong>{formatMoney(currentCandle.close * quantity)}</strong></div>
-                <div><span>模拟手续费</span><strong>{formatMoney(quantity * 2.2)}</strong></div>
-              </div>
-
-              <div className="practice-note">
-                <Sparkles size={16} />
-                <p><strong>练习提示</strong>先制定入场、止损与目标位，再执行交易。</p>
-              </div>
-            </aside>
-          </section>
-
-          <section className="activity-panel">
-            <div className="activity-tabs">
-              <button
-                className={bottomTab === 'positions' ? 'active' : ''}
-                onClick={() => setBottomTab('positions')}
-              >
-                <WalletCards size={15} /> 当前持仓
-                {position.quantity !== 0 && <i>1</i>}
-              </button>
-              <button
-                className={bottomTab === 'orders' ? 'active' : ''}
-                onClick={() => setBottomTab('orders')}
-              >
-                <Target size={15} /> 委托订单
-                {orders.length > 0 && <i>{orders.length}</i>}
-              </button>
-              <button
-                className={bottomTab === 'history' ? 'active' : ''}
-                onClick={() => setBottomTab('history')}
-              >
-                <History size={15} /> 成交记录
-                {trades.length > 0 && <i>{trades.length}</i>}
-              </button>
+              ))}
             </div>
-
-            <div className="activity-content">
-              {bottomTab === 'positions' && (
-                position.quantity === 0 ? (
-                  <div className="empty-state">
-                    <Gauge size={24} />
-                    <div><strong>暂无持仓</strong><span>从右侧下单面板开始你的第一笔模拟交易</span></div>
-                  </div>
-                ) : (
-                  <div className="position-row table-row">
-                    <div><small>合约</small><strong>{symbol.code}</strong><span>{symbol.name}</span></div>
-                    <div><small>方向 / 数量</small><strong className={position.quantity > 0 ? 'up-text' : 'down-text'}>
-                      {position.quantity > 0 ? '多头' : '空头'} {Math.abs(position.quantity)} 手
-                    </strong></div>
-                    <div><small>持仓均价</small><strong>{formatPrice(position.averagePrice, symbol)}</strong></div>
-                    <div><small>最新价格</small><strong>{formatPrice(currentCandle.close, symbol)}</strong></div>
-                    <div><small>浮动盈亏</small><strong className={unrealizedPnl >= 0 ? 'up-text' : 'down-text'}>
-                      {unrealizedPnl >= 0 ? '+' : ''}{formatMoney(unrealizedPnl)}
-                    </strong></div>
-                    <button onClick={closePosition}>市价平仓</button>
-                  </div>
-                )
-              )}
-
-              {bottomTab === 'orders' && (
-                orders.length === 0 ? (
-                  <div className="empty-state">
-                    <Target size={24} />
-                    <div><strong>暂无待成交委托</strong><span>限价单与止损单会显示在这里</span></div>
-                  </div>
-                ) : (
-                  <div className="compact-table">
-                    <div className="table-head"><span>品种</span><span>方向</span><span>类型</span><span>数量</span><span>委托价</span><span>状态</span><span /></div>
-                    {orders.map((order) => (
-                      <div className="table-line" key={order.id}>
-                        <strong>{symbol.code}</strong>
-                        <span className={order.side === 'buy' ? 'up-text' : 'down-text'}>{order.side === 'buy' ? '买入' : '卖出'}</span>
-                        <span>{order.type === 'limit' ? '限价' : '止损'}</span>
-                        <span>{order.quantity} 手</span>
-                        <span>{formatPrice(order.price, symbol)}</span>
-                        <span className="pending-status">等待成交</span>
-                        <button onClick={() => cancelOrder(order.id)}>撤单</button>
-                      </div>
-                    ))}
-                  </div>
-                )
-              )}
-
-              {bottomTab === 'history' && (
-                trades.length === 0 ? (
-                  <div className="empty-state">
-                    <History size={24} />
-                    <div><strong>暂无成交记录</strong><span>市价成交会实时记录在这里</span></div>
-                  </div>
-                ) : (
-                  <div className="compact-table">
-                    <div className="table-head"><span>成交时间</span><span>品种</span><span>方向</span><span>数量</span><span>成交价</span><span>已实现盈亏</span><span>类型</span></div>
-                    {trades.map((trade) => (
-                      <div className="table-line" key={trade.id}>
-                        <span>{formatReplayTime(trade.time)}</span>
-                        <strong>{symbol.code}</strong>
-                        <span className={trade.side === 'buy' ? 'up-text' : 'down-text'}>{trade.side === 'buy' ? '买入' : '卖出'}</span>
-                        <span>{trade.quantity} 手</span>
-                        <span>{formatPrice(trade.price, symbol)}</span>
-                        <span className={trade.realizedPnl >= 0 ? 'up-text' : 'down-text'}>
-                          {trade.realizedPnl === 0 ? '—' : formatMoney(trade.realizedPnl)}
-                        </span>
-                        <span>市价</span>
-                      </div>
-                    ))}
-                  </div>
-                )
-              )}
-            </div>
-          </section>
-
-          <footer>
-            <span><span className="online-dot" /> 本地模拟引擎正常</span>
-            <span>行情为演示数据，不构成投资建议</span>
-            <span>中文界面 · v1.0 MVP</span>
-          </footer>
+          </div>
         </section>
-      </main>
 
-      {toast && (
-        <div className="toast" role="status">
-          <span><Zap size={15} /></span>
-          {toast}
-          <button onClick={() => setToast('')}><X size={14} /></button>
+        <aside className="trade-panel">
+          <div className="panel-tabs">
+            {([
+              ['market', '市价'],
+              ['limit', '限价'],
+              ['stop', '止损单'],
+            ] as [OrderType, string][]).map(([value, label]) => (
+              <button key={value} className={orderType === value ? 'active' : ''} onClick={() => setOrderType(value)}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {orderType !== 'market' && (
+            <label className="field">
+              <span>委托价格 <button type="button" onClick={() => setPickMode('limit')}>点图选价</button></span>
+              <input value={limitPrice} onChange={(event) => setLimitPrice(event.target.value)} placeholder={formatPrice(current.close, symbol)} />
+            </label>
+          )}
+
+          <label className="field">
+            <span>下单数量（手）</span>
+            <div className="stepper">
+              <button onClick={() => setQuantity((value) => Math.max(1, value - 1))}>-</button>
+              <input value={quantity} onChange={(event) => setQuantity(Math.max(1, Number(event.target.value) || 1))} />
+              <button onClick={() => setQuantity((value) => Math.min(50, value + 1))}>+</button>
+            </div>
+          </label>
+
+          <label className="field">
+            <span>杠杆 {leverage}x</span>
+            <input type="range" min={1} max={20} value={leverage} onChange={(event) => setLeverage(Number(event.target.value))} />
+          </label>
+
+          <div className="tp-sl-grid">
+            <label>
+              <span>止盈 <button type="button" onClick={() => setPickMode('tp')}>点图</button></span>
+              <input value={takeProfit} onChange={(event) => setTakeProfit(event.target.value)} placeholder="可选" />
+            </label>
+            <label>
+              <span>止损 <button type="button" onClick={() => setPickMode('sl')}>点图</button></span>
+              <input value={stopLoss} onChange={(event) => setStopLoss(event.target.value)} placeholder="可选" />
+            </label>
+          </div>
+
+          <div className="order-actions">
+            <button className="buy" onClick={() => placeOrder('buy')}>
+              <span>买入 / 做多</span>
+              <strong>{formatPrice(orderType === 'market' ? quotes.ask : Number(limitPrice) || quotes.ask, symbol)}</strong>
+              <small>快捷键 B</small>
+            </button>
+            <button className="sell" onClick={() => placeOrder('sell')}>
+              <span>卖出 / 做空</span>
+              <strong>{formatPrice(orderType === 'market' ? quotes.bid : Number(limitPrice) || quotes.bid, symbol)}</strong>
+              <small>快捷键 S</small>
+            </button>
+          </div>
+
+          <button className="close-btn" onClick={closePosition} disabled={position.quantity === 0}>
+            市价平仓 · X
+          </button>
+
+          <div className="hint">
+            <Zap size={14} />
+            <p>空格播放/暂停，方向键逐根前进后退。点击图表可快速设置委托价、止盈或止损。</p>
+          </div>
+        </aside>
+      </div>
+
+      <section className="bottom-dock">
+        <div className="dock-tabs">
+          <button className={tab === 'positions' ? 'active' : ''} onClick={() => setTab('positions')}>持仓 {position.quantity !== 0 ? '1' : ''}</button>
+          <button className={tab === 'orders' ? 'active' : ''} onClick={() => setTab('orders')}>委托 {orders.length || ''}</button>
+          <button className={tab === 'fills' ? 'active' : ''} onClick={() => setTab('fills')}>成交 {fills.length || ''}</button>
         </div>
-      )}
+        <div className="dock-body">
+          {tab === 'positions' && (
+            position.quantity === 0 ? (
+              <div className="empty">暂无持仓。用右侧面板下单，或按 B / S。</div>
+            ) : (
+              <div className="row dense">
+                <span>{displaySymbol}</span>
+                <span className={position.quantity > 0 ? 'up' : 'down'}>{position.quantity > 0 ? '多' : '空'} {Math.abs(position.quantity)}</span>
+                <span>{formatPrice(position.averagePrice, symbol)}</span>
+                <span>{formatPrice(current.close, symbol)}</span>
+                <span className={unrealized >= 0 ? 'up' : 'down'}>{formatMoney(unrealized)}</span>
+                <span>TP {position.takeProfit ? formatPrice(position.takeProfit, symbol) : '—'}</span>
+                <span>SL {position.stopLoss ? formatPrice(position.stopLoss, symbol) : '—'}</span>
+                <button onClick={closePosition}>平仓</button>
+              </div>
+            )
+          )}
+          {tab === 'orders' && (
+            orders.length === 0 ? (
+              <div className="empty">暂无挂单。限价/止损单会在价格触及后成交。</div>
+            ) : (
+              orders.map((order) => (
+                <div className="row dense" key={order.id}>
+                  <span>{displaySymbol}</span>
+                  <span className={order.side === 'buy' ? 'up' : 'down'}>{order.side === 'buy' ? '买' : '卖'}</span>
+                  <span>{order.type === 'limit' ? '限价' : '止损单'}</span>
+                  <span>{order.quantity} 手</span>
+                  <span>{formatPrice(order.price, symbol)}</span>
+                  <button onClick={() => setOrders((value) => value.filter((item) => item.id !== order.id))}>撤单</button>
+                </div>
+              ))
+            )
+          )}
+          {tab === 'fills' && (
+            fills.length === 0 ? (
+              <div className="empty">暂无成交记录。</div>
+            ) : (
+              fills.slice(0, 8).map((fill) => (
+                <div className="row dense" key={fill.id}>
+                  <span>{formatTime(fill.time)}</span>
+                  <span className={fill.side === 'buy' ? 'up' : 'down'}>{fill.side === 'buy' ? '买' : '卖'}</span>
+                  <span>{fill.quantity} 手</span>
+                  <span>{formatPrice(fill.price, symbol)}</span>
+                  <span className={fill.realizedPnl >= 0 ? 'up' : 'down'}>{formatMoney(fill.realizedPnl)}</span>
+                  <span>{fill.reason}</span>
+                </div>
+              ))
+            )
+          )}
+        </div>
+      </section>
+
+      {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   );
 }
