@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   BriefcaseBusiness,
   CandlestickChart,
+  Dices,
   Pause,
   Play,
   RotateCcw,
   SkipBack,
-  SkipForward,
   StepBack,
   StepForward,
   TrendingUp,
@@ -15,24 +15,33 @@ import {
 } from 'lucide-react';
 import { ChartPane } from './components/ChartPane';
 import {
+  HISTORY_SOURCES,
   SYMBOLS,
   TIMEFRAMES,
   LEVERAGE_OPTIONS,
   USDT_CNY_RATE,
   applyFill,
+  clampReplayOffset,
   computeMacd,
   computeStats,
   emptyPosition,
   estimateLiquidationPrice,
+  findCandleIndexByTime,
   formatMoney,
   formatPrice,
   formatTime,
   generateMarketData,
+  getHistorySource,
   getSymbol,
+  historyBarCount,
   marketQuotes,
   matchPendingOrders,
   matchProtectiveOrders,
+  maxReplayOffset,
+  minReplayOffset,
+  pickRandomStartOffset,
   positionMargin,
+  resolveStartOffset,
   roundToTick,
   unitLabel,
   unrealizedPnl,
@@ -44,6 +53,7 @@ import {
   type Position,
   type SessionConfig,
   type Side,
+  type StartMode,
   type Timeframe,
 } from './model/market';
 import './styles.css';
@@ -51,6 +61,7 @@ import './styles.css';
 type Screen = 'setup' | 'practice' | 'report';
 type MobileTab = 'chart' | 'trade' | 'account';
 type AccountTab = 'positions' | 'orders' | 'fills';
+type PickMode = 'tp' | 'sl' | 'limit' | 'replay' | null;
 
 const DEFAULT_CONFIG: SessionConfig = {
   symbolCode: 'NAS100',
@@ -58,6 +69,8 @@ const DEFAULT_CONFIG: SessionConfig = {
   startCapital: 100_000,
   startOffset: 80,
   blindMode: false,
+  historySourceId: 'us-session-2024',
+  startMode: 'random',
 };
 
 const MOBILE_SPEEDS = [0.5, 1, 2, 5, 10, 20, 50] as const;
@@ -66,10 +79,17 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>('setup');
   const [config, setConfig] = useState<SessionConfig>(DEFAULT_CONFIG);
   const symbol = useMemo(() => getSymbol(config.symbolCode), [config.symbolCode]);
-  const candles = useMemo(
-    () => generateMarketData(symbol, config.timeframe),
-    [symbol, config.timeframe],
+  const historySource = useMemo(
+    () => getHistorySource(config.historySourceId),
+    [config.historySourceId],
   );
+  const candles = useMemo(
+    () => generateMarketData(symbol, config.timeframe, { source: historySource }),
+    [symbol, config.timeframe, historySource],
+  );
+  const candleCount = candles.length;
+  const replayMin = minReplayOffset(candleCount);
+  const replayMax = maxReplayOffset(candleCount);
 
   const [playhead, setPlayhead] = useState(config.startOffset);
   const [playing, setPlaying] = useState(false);
@@ -87,7 +107,7 @@ export default function App() {
   const [mobileTab, setMobileTab] = useState<MobileTab>('chart');
   const [accountTab, setAccountTab] = useState<AccountTab>('positions');
   const [toast, setToast] = useState('');
-  const [pickMode, setPickMode] = useState<'tp' | 'sl' | 'limit' | null>(null);
+  const [pickMode, setPickMode] = useState<PickMode>(null);
 
   const current = candles[playhead] ?? candles[0];
   const quotes = marketQuotes(symbol, current.close);
@@ -112,9 +132,7 @@ export default function App() {
   const money = (value: number) => formatMoney(value, currency);
   const priceText = (value: number) => formatPrice(value, symbol, currency);
 
-  const resetTradingState = (nextConfig = config) => {
-    setPlayhead(nextConfig.startOffset);
-    setPlaying(false);
+  const clearOrdersAndFills = () => {
     setPosition(emptyPosition());
     setOrders([]);
     setFills([]);
@@ -122,14 +140,39 @@ export default function App() {
     setTakeProfit('');
     setStopLoss('');
     setPickMode(null);
-    setMobileTab('chart');
     setAccountTab('positions');
   };
 
+  const jumpToReplay = (offset: number, label: string) => {
+    const next = clampReplayOffset(offset, candleCount);
+    setPlaying(false);
+    setPlayhead(next);
+    setConfig((value) => ({ ...value, startOffset: next, startMode: 'custom' }));
+    clearOrdersAndFills();
+    setMobileTab('chart');
+    const candle = candles[next];
+    setToast(`${label} · ${candle ? formatTime(candle.time) : ''}（${next + 1}/${candleCount}）`);
+  };
+
+  const jumpToBegin = () => jumpToReplay(replayMin, '已跳到数据起点');
+  const jumpToRandom = () => jumpToReplay(pickRandomStartOffset(candleCount), '已随机跳转历史时间');
+
+  const resetTradingState = (nextConfig = config, offset = nextConfig.startOffset) => {
+    setPlayhead(clampReplayOffset(offset, candleCount));
+    setPlaying(false);
+    clearOrdersAndFills();
+    setMobileTab('chart');
+  };
+
   const startSession = () => {
-    resetTradingState(config);
+    const offset = resolveStartOffset(config.startMode, candleCount, config.startOffset);
+    const nextConfig = { ...config, startOffset: offset };
+    setConfig(nextConfig);
+    resetTradingState(nextConfig, offset);
     setScreen('practice');
-    setToast('会话已开始，点播放即可逐根练习');
+    const modeLabel =
+      config.startMode === 'begin' ? '从数据起点' : config.startMode === 'random' ? '随机历史时间' : '自定义起点';
+    setToast(`${modeLabel}开始 · ${formatTime(candles[offset]?.time ?? Date.now())}`);
   };
 
   const endSession = () => {
@@ -150,6 +193,10 @@ export default function App() {
     }, Math.max(50, 700 / speed));
     return () => window.clearInterval(timer);
   }, [playing, speed, candles.length, screen]);
+
+  useEffect(() => {
+    setPlayhead((value) => clampReplayOffset(value, candleCount));
+  }, [candleCount, config.historySourceId, config.timeframe]);
 
   useEffect(() => {
     if (screen !== 'practice') return;
@@ -275,6 +322,7 @@ export default function App() {
   };
 
   const onPickPrice = (price: number) => {
+    if (pickMode === 'replay') return;
     const rounded = roundToTick(price, symbol.tickSize);
     if (pickMode === 'tp') setTakeProfit(String(rounded));
     else if (pickMode === 'sl') setStopLoss(String(rounded));
@@ -282,6 +330,28 @@ export default function App() {
     setPickMode(null);
     setToast(`已选 ${priceText(rounded)}`);
     setMobileTab('trade');
+  };
+
+  const onPickBar = (timeMs: number) => {
+    if (pickMode !== 'replay') return;
+    const index = findCandleIndexByTime(candles, timeMs);
+    jumpToReplay(index, '已按图表选点回放');
+  };
+
+  const setStartMode = (mode: StartMode) => {
+    setConfig((value) => {
+      if (mode === 'begin') {
+        return { ...value, startMode: mode, startOffset: replayMin };
+      }
+      if (mode === 'random') {
+        return { ...value, startMode: mode, startOffset: pickRandomStartOffset(candleCount) };
+      }
+      return {
+        ...value,
+        startMode: mode,
+        startOffset: clampReplayOffset(Math.floor(candleCount * 0.35), candleCount),
+      };
+    });
   };
 
   if (screen === 'setup') {
@@ -309,10 +379,25 @@ export default function App() {
             >
               {SYMBOLS.map((item) => (
                 <option key={item.code} value={item.code}>
-                  {item.category} · {item.code}
+                  {item.category} · {item.code} · {item.name}
                 </option>
               ))}
             </select>
+          </label>
+
+          <label>
+            <span>历史数据源</span>
+            <select
+              value={config.historySourceId}
+              onChange={(event) => setConfig((value) => ({ ...value, historySourceId: event.target.value }))}
+            >
+              {HISTORY_SOURCES.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label} · {historyBarCount(item, config.timeframe)} 根
+                </option>
+              ))}
+            </select>
+            <small className="field-hint">{historySource.description}</small>
           </label>
 
           <label>
@@ -328,6 +413,58 @@ export default function App() {
                 </button>
               ))}
             </div>
+          </label>
+
+          <label>
+            <span>回放起点（类似 TradingView Replay）</span>
+            <div className="chip-row start-mode-row">
+              <button
+                type="button"
+                className={config.startMode === 'begin' ? 'active' : ''}
+                onClick={() => setStartMode('begin')}
+              >
+                数据起点
+              </button>
+              <button
+                type="button"
+                className={config.startMode === 'random' ? 'active' : ''}
+                onClick={() => setStartMode('random')}
+              >
+                随机时间
+              </button>
+              <button
+                type="button"
+                className={config.startMode === 'custom' ? 'active' : ''}
+                onClick={() => setStartMode('custom')}
+              >
+                自定义进度
+              </button>
+            </div>
+            {config.startMode === 'custom' && (
+              <div className="start-scrub">
+                <input
+                  type="range"
+                  min={replayMin}
+                  max={replayMax}
+                  value={clampReplayOffset(config.startOffset, candleCount)}
+                  onChange={(event) =>
+                    setConfig((value) => ({
+                      ...value,
+                      startMode: 'custom',
+                      startOffset: Number(event.target.value),
+                    }))
+                  }
+                />
+                <span>
+                  {formatTime(candles[clampReplayOffset(config.startOffset, candleCount)]?.time ?? Date.now())}
+                  · {clampReplayOffset(config.startOffset, candleCount) + 1}/{candleCount}
+                </span>
+              </div>
+            )}
+            <small className="field-hint">
+              当前数据 {candleCount} 根 · {formatTime(candles[0]?.time ?? Date.now())} 至{' '}
+              {formatTime(candles[candleCount - 1]?.time ?? Date.now())}
+            </small>
           </label>
 
           <label>
@@ -511,7 +648,9 @@ export default function App() {
 
             {pickMode && (
               <div className="pick-tip">
-                点图表设置{pickMode === 'tp' ? '止盈' : pickMode === 'sl' ? '止损' : '委托价'}
+                {pickMode === 'replay'
+                  ? '点图表 K 线选择回放起点（将清空当前持仓/委托）'
+                  : `点图表设置${pickMode === 'tp' ? '止盈' : pickMode === 'sl' ? '止损' : '委托价'}`}
                 <button onClick={() => setPickMode(null)}>取消</button>
               </div>
             )}
@@ -523,21 +662,46 @@ export default function App() {
               fills={fills}
               orders={orders}
               position={position}
+              pickMode={pickMode === 'replay' ? 'bar' : pickMode ? 'price' : null}
               onPickPrice={onPickPrice}
+              onPickBar={onPickBar}
             />
 
             <div className="replay-dock">
-              <div className="progress-line">
-                <i style={{ width: `${progress}%` }} />
+              <div className="replay-jump-row">
+                <button type="button" className="jump-btn" onClick={jumpToBegin}>
+                  <SkipBack size={14} /> 数据起点
+                </button>
+                <button type="button" className="jump-btn" onClick={jumpToRandom}>
+                  <Dices size={14} /> 随机时间
+                </button>
+                <button
+                  type="button"
+                  className={`jump-btn ${pickMode === 'replay' ? 'active' : ''}`}
+                  onClick={() => setPickMode((value) => (value === 'replay' ? null : 'replay'))}
+                >
+                  选点回放
+                </button>
               </div>
+              <label className="progress-scrub">
+                <input
+                  type="range"
+                  min={replayMin}
+                  max={Math.max(replayMin, candleCount - 1)}
+                  value={playhead}
+                  onChange={(event) => jumpToReplay(Number(event.target.value), '已拖动进度条定位')}
+                  aria-label="回放进度"
+                />
+                <i style={{ width: `${progress}%` }} />
+              </label>
               <div className="replay-row">
-                <button type="button" className="ctrl" onClick={() => setPlayhead(0)} aria-label="回到开始">
+                <button type="button" className="ctrl" onClick={jumpToBegin} aria-label="跳到数据起点">
                   <SkipBack size={16} />
                 </button>
                 <button
                   type="button"
                   className="ctrl"
-                  onClick={() => { setPlaying(false); setPlayhead((value) => Math.max(0, value - 1)); }}
+                  onClick={() => { setPlaying(false); setPlayhead((value) => Math.max(replayMin, value - 1)); }}
                   aria-label="上一根K线"
                 >
                   <StepBack size={16} />
@@ -559,8 +723,13 @@ export default function App() {
                 >
                   <StepForward size={16} />
                 </button>
-                <button type="button" className="ctrl" onClick={() => setPlayhead(candles.length - 1)} aria-label="跳到最后">
-                  <SkipForward size={16} />
+                <button
+                  type="button"
+                  className="ctrl"
+                  onClick={() => jumpToRandom()}
+                  aria-label="随机跳转历史时间"
+                >
+                  <Dices size={16} />
                 </button>
                 <label className="speed-select">
                   <span>速率</span>
@@ -577,6 +746,7 @@ export default function App() {
                 <span>DEA {macd ? macd.dea.toFixed(2) : '—'}</span>
                 <span className={macd && macd.hist >= 0 ? 'up' : 'down'}>柱 {macd ? macd.hist.toFixed(2) : '—'}</span>
                 <span>{formatTime(current.time)}</span>
+                <span>{playhead + 1}/{candleCount}</span>
               </div>
             </div>
           </section>

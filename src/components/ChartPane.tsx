@@ -24,7 +24,9 @@ interface ChartPaneProps {
   fills: Fill[];
   orders: PendingOrder[];
   position: Position;
+  pickMode?: 'price' | 'bar' | null;
   onPickPrice?: (price: number) => void;
+  onPickBar?: (timeMs: number) => void;
 }
 
 function toCandleData(candles: Candle[]): CandlestickData<Time>[] {
@@ -62,7 +64,9 @@ export function ChartPane({
   fills,
   orders,
   position,
+  pickMode = null,
   onPickPrice,
+  onPickBar,
 }: ChartPaneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -74,8 +78,12 @@ export function ChartPane({
   const macdDeaRef = useRef<ISeriesApi<'Line'> | null>(null);
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
-  const pickRef = useRef(onPickPrice);
-  pickRef.current = onPickPrice;
+  const pickPriceRef = useRef(onPickPrice);
+  const pickBarRef = useRef(onPickBar);
+  const pickModeRef = useRef(pickMode);
+  pickPriceRef.current = onPickPrice;
+  pickBarRef.current = onPickBar;
+  pickModeRef.current = pickMode;
 
   useEffect(() => {
     if (!containerRef.current) return undefined;
@@ -188,10 +196,16 @@ export function ChartPane({
     macdDeaRef.current = macdDea;
     markersRef.current = createSeriesMarkers(candleSeries, []);
 
-    const onClick = (param: { point?: { y: number }; paneIndex?: number }) => {
-      if (!param.point || param.paneIndex !== 0 || !candleSeriesRef.current || !pickRef.current) return;
+    const onClick = (param: { point?: { y: number }; paneIndex?: number; time?: Time }) => {
+      if (param.paneIndex !== 0) return;
+      if (pickModeRef.current === 'bar' && param.time != null && pickBarRef.current) {
+        const raw = typeof param.time === 'number' ? param.time : Date.parse(String(param.time)) / 1000;
+        if (Number.isFinite(raw)) pickBarRef.current(raw * 1000);
+        return;
+      }
+      if (!param.point || !candleSeriesRef.current || !pickPriceRef.current) return;
       const price = candleSeriesRef.current.coordinateToPrice(param.point.y);
-      if (typeof price === 'number') pickRef.current(price);
+      if (typeof price === 'number') pickPriceRef.current(price);
     };
     chart.subscribeClick(onClick);
 

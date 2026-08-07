@@ -155,7 +155,31 @@ input, select {
   background: linear-gradient(145deg, #ffd15a, #f5b301);
   box-shadow: 0 10px 24px rgba(245, 179, 1, 0.22);
 }
-.sticky-cta { width: 100%; flex: none; }
+.field-hint {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+.start-scrub {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+.start-scrub input[type='range'] {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  accent-color: var(--amber);
+}
+.start-scrub span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
 
 .practice-screen { padding-top: var(--safe-top); }
 .mobile-top {
@@ -313,6 +337,69 @@ input, select {
   background: #0c131b;
   padding: 0 10px 8px;
 }
+.replay-jump-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding-top: 8px;
+}
+.jump-btn {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 10px;
+  color: var(--muted);
+  background: #15202b;
+  border: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 700;
+}
+.jump-btn.active {
+  color: #161616;
+  background: linear-gradient(145deg, #ffd15a, #f5b301);
+  border-color: transparent;
+}
+.progress-scrub {
+  position: relative;
+  display: block;
+  height: 18px;
+  margin: 6px 0 4px;
+}
+.progress-scrub input[type='range'] {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  accent-color: var(--amber);
+  cursor: pointer;
+}
+.progress-scrub i {
+  position: absolute;
+  left: 0;
+  top: 7px;
+  z-index: 1;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #f5b301, #ffd15a);
+  pointer-events: none;
+}
+.progress-scrub::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 7px;
+  height: 3px;
+  border-radius: 999px;
+  background: #1a2430;
+}
 .progress-line {
   height: 3px;
   margin: 0 -10px 8px;
@@ -384,7 +471,8 @@ input, select {
 .macd-mini {
   margin-top: 6px;
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px 10px;
   color: var(--muted);
   font-size: 11px;
 }

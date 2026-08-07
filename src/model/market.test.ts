@@ -4,12 +4,19 @@ import {
   computeMacd,
   emptyPosition,
   estimateLiquidationPrice,
+  findCandleIndexByTime,
   formatMoney,
   formatPrice,
   generateMarketData,
+  getHistorySource,
   getSymbol,
+  historyBarCount,
   matchPendingOrders,
   matchProtectiveOrders,
+  maxReplayOffset,
+  minReplayOffset,
+  pickRandomStartOffset,
+  resolveStartOffset,
   toDisplayAmount,
   unrealizedPnl,
   unrealizedRoe,
@@ -83,6 +90,25 @@ export const tests = [
       equal(result.position.quantity, 1);
       equal(result.position.leverage, 20);
       equal(result.fills[0].reason, 'limit');
+    },
+  },
+  {
+    name: 'history sources produce long deterministic series and replay offsets',
+    run() {
+      const symbol = getSymbol('BTCUSD');
+      const source = getHistorySource('crypto-impulse');
+      const count = historyBarCount(source, '5m');
+      equal(count > 1000, true);
+      const candles = generateMarketData(symbol, '5m', { source });
+      equal(candles.length, count);
+      equal(generateMarketData(symbol, '5m', { source })[100].close, candles[100].close);
+      equal(minReplayOffset(count), 60);
+      equal(maxReplayOffset(count) < count, true);
+      equal(resolveStartOffset('begin', count), 60);
+      const random = pickRandomStartOffset(count, () => 0.5);
+      equal(random >= 60 && random <= maxReplayOffset(count), true);
+      const index = findCandleIndexByTime(candles, candles[120].time);
+      equal(index, 120);
     },
   },
   {
