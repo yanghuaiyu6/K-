@@ -1,5 +1,5 @@
 {
-  "name": "macd-recursive-energy-visualizer",
+  "name": "replay-trader-cn",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -10,16 +10,32 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "latest",
-    "vite": "latest",
-    "typescript": "latest",
-    "react": "latest",
-    "react-dom": "latest"
+    "lucide-react": "^1.29.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "typescript": "latest"
   },
   "devDependencies": {
-    "vitest": "latest",
-    "jsdom": "latest",
     "@types/react": "latest",
-    "@types/react-dom": "latest"
-  }
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "^6.0.5",
+    "jsdom": "latest",
+    "vite": "^8.2.1",
+    "vitest": "latest"
+  },
+  "description": "中文版交易复盘与模拟下单应用",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yanghuaiyu6/K-.git"
+  },
+  "keywords": [
+    "replay-trader",
+    "trading-simulator",
+    "zh-cn"
+  ],
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/yanghuaiyu6/K-/issues"
+  },
+  "homepage": "https://github.com/yanghuaiyu6/K-#readme"
 }
