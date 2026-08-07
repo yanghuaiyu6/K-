@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  BriefcaseBusiness,
   CandlestickChart,
   Dices,
   Pause,
@@ -10,7 +9,6 @@ import {
   StepBack,
   StepForward,
   TrendingUp,
-  WalletCards,
   X,
 } from 'lucide-react';
 import { ChartPane } from './components/ChartPane';
@@ -59,7 +57,6 @@ import {
 import './styles.css';
 
 type Screen = 'setup' | 'practice' | 'report';
-type MobileTab = 'chart' | 'trade' | 'account';
 type AccountTab = 'positions' | 'orders' | 'fills';
 type PickMode = 'tp' | 'sl' | 'limit' | 'replay' | null;
 
@@ -104,8 +101,8 @@ export default function App() {
   const [position, setPosition] = useState<Position>(emptyPosition());
   const [orders, setOrders] = useState<PendingOrder[]>([]);
   const [fills, setFills] = useState<Fill[]>([]);
-  const [mobileTab, setMobileTab] = useState<MobileTab>('chart');
   const [accountTab, setAccountTab] = useState<AccountTab>('positions');
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [toast, setToast] = useState('');
   const [pickMode, setPickMode] = useState<PickMode>(null);
 
@@ -141,27 +138,28 @@ export default function App() {
     setStopLoss('');
     setPickMode(null);
     setAccountTab('positions');
+    setSheetOpen(false);
   };
 
-  const jumpToReplay = (offset: number, label: string) => {
+  const jumpToReplay = (offset: number, label: string, quiet = false) => {
     const next = clampReplayOffset(offset, candleCount);
     setPlaying(false);
     setPlayhead(next);
     setConfig((value) => ({ ...value, startOffset: next, startMode: 'custom' }));
     clearOrdersAndFills();
-    setMobileTab('chart');
     const candle = candles[next];
-    setToast(`${label} · ${candle ? formatTime(candle.time) : ''}（${next + 1}/${candleCount}）`);
+    if (!quiet) {
+      setToast(`${label} · ${candle ? formatTime(candle.time) : ''}`);
+    }
   };
 
-  const jumpToBegin = () => jumpToReplay(replayMin, '已跳到数据起点');
-  const jumpToRandom = () => jumpToReplay(pickRandomStartOffset(candleCount), '已随机跳转历史时间');
+  const jumpToBegin = () => jumpToReplay(replayMin, '数据起点');
+  const jumpToRandom = () => jumpToReplay(pickRandomStartOffset(candleCount), '随机跳转');
 
   const resetTradingState = (nextConfig = config, offset = nextConfig.startOffset) => {
     setPlayhead(clampReplayOffset(offset, candleCount));
     setPlaying(false);
     clearOrdersAndFills();
-    setMobileTab('chart');
   };
 
   const startSession = () => {
@@ -223,14 +221,13 @@ export default function App() {
       setPosition(protective.position);
       setFills((currentFills) => [...protective.fills, ...currentFills]);
       setToast(protective.fills[0].reason === 'takeProfit' ? '止盈已触发' : '止损已触发');
-      setMobileTab('account');
       setAccountTab('fills');
     }
   }, [playhead, position.quantity, position.takeProfit, position.stopLoss]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!toast) return undefined;
-    const timer = window.setTimeout(() => setToast(''), 2000);
+    const timer = window.setTimeout(() => setToast(''), 900);
     return () => window.clearTimeout(timer);
   }, [toast]);
 
@@ -247,9 +244,8 @@ export default function App() {
       orderType === 'market' ? (side === 'buy' ? quotes.ask : quotes.bid) : Number(limitPrice);
 
     if (orderType !== 'market' && (!Number.isFinite(price) || price <= 0)) {
-      setToast('请输入委托价，或到行情页点图选价');
+      setToast('请输入委托价，或点图选价');
       setPickMode('limit');
-      setMobileTab('chart');
       return;
     }
 
@@ -269,8 +265,7 @@ export default function App() {
         ...currentOrders,
       ]);
       setAccountTab('orders');
-      setMobileTab('account');
-      setToast(`${side === 'buy' ? '买入' : '卖出'}委托已挂单 · ${leverage}x`);
+      setToast(`${side === 'buy' ? '买入' : '卖出'}已挂单`);
       return;
     }
 
@@ -294,7 +289,7 @@ export default function App() {
       ...currentFills,
     ]);
     setAccountTab('positions');
-    setToast(`${side === 'buy' ? '开多' : '开空'} ${quantity} 张 · ${leverage}x`);
+    setToast(`${side === 'buy' ? '开多' : '开空'} ${quantity}张`);
   };
 
   const closePosition = () => {
@@ -317,7 +312,7 @@ export default function App() {
       },
       ...currentFills,
     ]);
-    setToast(`已平仓 · 实现盈亏 ${money(result.realizedPnl)}`);
+    setToast(`已平仓 ${money(result.realizedPnl)}`);
     setAccountTab('fills');
   };
 
@@ -329,13 +324,12 @@ export default function App() {
     else setLimitPrice(String(rounded));
     setPickMode(null);
     setToast(`已选 ${priceText(rounded)}`);
-    setMobileTab('trade');
   };
 
   const onPickBar = (timeMs: number) => {
     if (pickMode !== 'replay') return;
     const index = findCandleIndexByTime(candles, timeMs);
-    jumpToReplay(index, '已按图表选点回放');
+    jumpToReplay(index, '选点回放');
   };
 
   const setStartMode = (mode: StartMode) => {
@@ -621,270 +615,238 @@ export default function App() {
         </div>
       </section>
 
-      <main className="mobile-main">
-        {mobileTab === 'chart' && (
-          <section className="chart-view">
-            <div className="chart-head">
-              <div className="tf-row">
-                {TIMEFRAMES.map((item) => (
-                  <button
-                    key={item.id}
-                    className={config.timeframe === item.id ? 'active' : ''}
-                    onClick={() => {
-                      setConfig((value) => ({ ...value, timeframe: item.id as Timeframe }));
-                      setPlaying(false);
-                    }}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-              <div className="quote-mini">
-                <span className="up">{priceText(quotes.bid)}</span>
-                <span>/</span>
-                <span className="down">{priceText(quotes.ask)}</span>
-              </div>
-            </div>
-
-            {pickMode && (
-              <div className="pick-tip">
-                {pickMode === 'replay'
-                  ? '点图表 K 线选择回放起点（将清空当前持仓/委托）'
-                  : `点图表设置${pickMode === 'tp' ? '止盈' : pickMode === 'sl' ? '止损' : '委托价'}`}
-                <button onClick={() => setPickMode(null)}>取消</button>
-              </div>
-            )}
-
-            <ChartPane
-              candles={candles}
-              playhead={playhead}
-              symbol={symbol}
-              fills={fills}
-              orders={orders}
-              position={position}
-              pickMode={pickMode === 'replay' ? 'bar' : pickMode ? 'price' : null}
-              onPickPrice={onPickPrice}
-              onPickBar={onPickBar}
-            />
-
-            <div className="replay-dock">
-              <div className="replay-jump-row">
-                <button type="button" className="jump-btn" onClick={jumpToBegin}>
-                  <SkipBack size={14} /> 数据起点
-                </button>
-                <button type="button" className="jump-btn" onClick={jumpToRandom}>
-                  <Dices size={14} /> 随机时间
-                </button>
+      <main className="desk">
+        <section className="chart-stack">
+          <div className="chart-head">
+            <div className="tf-row">
+              {TIMEFRAMES.map((item) => (
                 <button
-                  type="button"
-                  className={`jump-btn ${pickMode === 'replay' ? 'active' : ''}`}
-                  onClick={() => setPickMode((value) => (value === 'replay' ? null : 'replay'))}
+                  key={item.id}
+                  className={config.timeframe === item.id ? 'active' : ''}
+                  onClick={() => {
+                    setConfig((value) => ({ ...value, timeframe: item.id as Timeframe }));
+                    setPlaying(false);
+                  }}
                 >
-                  选点回放
+                  {item.label}
                 </button>
-              </div>
-              <label className="progress-scrub">
-                <input
-                  type="range"
-                  min={replayMin}
-                  max={Math.max(replayMin, candleCount - 1)}
-                  value={playhead}
-                  onChange={(event) => jumpToReplay(Number(event.target.value), '已拖动进度条定位')}
-                  aria-label="回放进度"
-                />
-                <i style={{ width: `${progress}%` }} />
+              ))}
+            </div>
+            <button type="button" className="sheet-chip" onClick={() => setSheetOpen(true)}>
+              持仓 {position.quantity === 0 ? 0 : Math.abs(position.quantity)}
+              {orders.length ? ` · 委托${orders.length}` : ''}
+            </button>
+          </div>
+
+          {pickMode && (
+            <div className="pick-tip">
+              {pickMode === 'replay'
+                ? '点图表 K 线选择回放起点'
+                : `点图表设置${pickMode === 'tp' ? '止盈' : pickMode === 'sl' ? '止损' : '委托价'}`}
+              <button onClick={() => setPickMode(null)}>取消</button>
+            </div>
+          )}
+
+          <ChartPane
+            candles={candles}
+            playhead={playhead}
+            symbol={symbol}
+            fills={fills}
+            orders={orders}
+            position={position}
+            pickMode={pickMode === 'replay' ? 'bar' : pickMode ? 'price' : null}
+            onPickPrice={onPickPrice}
+            onPickBar={onPickBar}
+          />
+
+          <div className="replay-dock compact">
+            <label className="progress-scrub">
+              <input
+                type="range"
+                min={replayMin}
+                max={Math.max(replayMin, candleCount - 1)}
+                value={playhead}
+                onChange={(event) => jumpToReplay(Number(event.target.value), '进度定位', true)}
+                aria-label="回放进度"
+              />
+              <i style={{ width: `${progress}%` }} />
+            </label>
+            <div className="replay-row">
+              <button type="button" className="ctrl" onClick={jumpToBegin} aria-label="数据起点" title="数据起点">
+                <SkipBack size={15} />
+              </button>
+              <button
+                type="button"
+                className="ctrl"
+                onClick={() => { setPlaying(false); setPlayhead((value) => Math.max(replayMin, value - 1)); }}
+                aria-label="上一根"
+              >
+                <StepBack size={15} />
+              </button>
+              <button
+                type="button"
+                className={`play-toggle ${playing ? 'is-playing' : 'is-paused'}`}
+                onClick={() => setPlaying((value) => !value)}
+                aria-label={playing ? '暂停' : '播放'}
+              >
+                {playing ? <Pause size={16} /> : <Play size={16} />}
+                <span>{playing ? '暂停' : '播放'}</span>
+              </button>
+              <button
+                type="button"
+                className="ctrl"
+                onClick={() => { setPlaying(false); setPlayhead((value) => Math.min(candles.length - 1, value + 1)); }}
+                aria-label="下一根"
+              >
+                <StepForward size={15} />
+              </button>
+              <button type="button" className="ctrl" onClick={jumpToRandom} aria-label="随机时间" title="随机时间">
+                <Dices size={15} />
+              </button>
+              <button
+                type="button"
+                className={`ctrl ${pickMode === 'replay' ? 'active-ctrl' : ''}`}
+                onClick={() => setPickMode((value) => (value === 'replay' ? null : 'replay'))}
+                aria-label="选点回放"
+              >
+                <CandlestickChart size={15} />
+              </button>
+              <label className="speed-select">
+                <select value={speed} onChange={(event) => setSpeed(Number(event.target.value))} aria-label="速率">
+                  {MOBILE_SPEEDS.map((item) => (
+                    <option key={item} value={item}>{item}x</option>
+                  ))}
+                </select>
               </label>
-              <div className="replay-row">
-                <button type="button" className="ctrl" onClick={jumpToBegin} aria-label="跳到数据起点">
-                  <SkipBack size={16} />
-                </button>
-                <button
-                  type="button"
-                  className="ctrl"
-                  onClick={() => { setPlaying(false); setPlayhead((value) => Math.max(replayMin, value - 1)); }}
-                  aria-label="上一根K线"
-                >
-                  <StepBack size={16} />
-                </button>
-                <button
-                  type="button"
-                  className={`play-toggle ${playing ? 'is-playing' : 'is-paused'}`}
-                  onClick={() => setPlaying((value) => !value)}
-                  aria-label={playing ? '暂停回放' : '开始回放'}
-                >
-                  {playing ? <Pause size={18} /> : <Play size={18} />}
-                  <span>{playing ? '暂停' : '播放'}</span>
-                </button>
-                <button
-                  type="button"
-                  className="ctrl"
-                  onClick={() => { setPlaying(false); setPlayhead((value) => Math.min(candles.length - 1, value + 1)); }}
-                  aria-label="下一根K线"
-                >
-                  <StepForward size={16} />
-                </button>
-                <button
-                  type="button"
-                  className="ctrl"
-                  onClick={() => jumpToRandom()}
-                  aria-label="随机跳转历史时间"
-                >
-                  <Dices size={16} />
-                </button>
-                <label className="speed-select">
-                  <span>速率</span>
-                  <select value={speed} onChange={(event) => setSpeed(Number(event.target.value))}>
-                    {MOBILE_SPEEDS.map((item) => (
-                      <option key={item} value={item}>{item}x</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <div className="macd-mini">
-                <span>MACD</span>
-                <span>DIF {macd ? macd.dif.toFixed(2) : '—'}</span>
-                <span>DEA {macd ? macd.dea.toFixed(2) : '—'}</span>
-                <span className={macd && macd.hist >= 0 ? 'up' : 'down'}>柱 {macd ? macd.hist.toFixed(2) : '—'}</span>
-                <span>{formatTime(current.time)}</span>
-                <span>{playhead + 1}/{candleCount}</span>
-              </div>
             </div>
-          </section>
-        )}
+            <div className="macd-mini">
+              <span>{formatTime(current.time)}</span>
+              <span>{playhead + 1}/{candleCount}</span>
+              <span className={macd && macd.hist >= 0 ? 'up' : 'down'}>MACD {macd ? macd.hist.toFixed(2) : '—'}</span>
+            </div>
+          </div>
+        </section>
 
-        {mobileTab === 'trade' && (
-          <section className="trade-view">
-            <div className="panel-tabs">
+        <section className="trade-panel" aria-label="下单区">
+          {position.quantity !== 0 && (
+            <div className="pos-strip">
+              <strong className={position.quantity > 0 ? 'up' : 'down'}>
+                {position.quantity > 0 ? '多' : '空'} {Math.abs(position.quantity)}张 · {activeLeverage}x
+              </strong>
+              <span className={floating >= 0 ? 'up' : 'down'}>{money(floating)} ({roe.toFixed(2)}%)</span>
+              <button type="button" onClick={closePosition}>平仓</button>
+            </div>
+          )}
+
+          <div className="trade-toolbar">
+            <div className="panel-tabs compact">
               {([
                 ['market', '市价'],
                 ['limit', '限价'],
-                ['stop', '止损单'],
+                ['stop', '止损'],
               ] as [OrderType, string][]).map(([value, label]) => (
                 <button key={value} className={orderType === value ? 'active' : ''} onClick={() => setOrderType(value)}>
                   {label}
                 </button>
               ))}
             </div>
-
-            <div className="trade-price-card">
-              <div>
-                <span>买一</span>
-                <strong className="up">{priceText(quotes.bid)}</strong>
-              </div>
-              <div>
-                <span>卖一</span>
-                <strong className="down">{priceText(quotes.ask)}</strong>
-              </div>
-              <div>
-                <span>点差</span>
-                <strong>{priceText(quotes.spread)}</strong>
-              </div>
-            </div>
-
-            <label className="field">
+            <label className="inline-field">
               <span>杠杆</span>
-              <div className="leverage-row">
+              <select value={leverage} onChange={(event) => setLeverage(Number(event.target.value))}>
                 {LEVERAGE_OPTIONS.map((item) => (
-                  <button
-                    key={item}
-                    className={leverage === item ? 'active' : ''}
-                    onClick={() => setLeverage(item)}
-                  >
-                    {item}x
-                  </button>
+                  <option key={item} value={item}>{item}x</option>
                 ))}
-              </div>
+              </select>
             </label>
-
-            {orderType !== 'market' && (
-              <label className="field">
-                <span>
-                  委托价格（{unitLabel(currency)}）
-                  <button type="button" onClick={() => { setPickMode('limit'); setMobileTab('chart'); }}>点图选价</button>
-                </span>
-                <input
-                  value={limitPrice}
-                  onChange={(event) => setLimitPrice(event.target.value)}
-                  placeholder={priceText(current.close)}
-                  inputMode="decimal"
-                />
-              </label>
-            )}
-
-            <label className="field">
-              <span>数量（张）</span>
-              <div className="stepper">
-                <button onClick={() => setQuantity((value) => Math.max(1, value - 1))}>−</button>
+            <label className="inline-field qty-field">
+              <span>数量</span>
+              <div className="stepper compact">
+                <button type="button" onClick={() => setQuantity((value) => Math.max(1, value - 1))}>−</button>
                 <input
                   value={quantity}
                   onChange={(event) => setQuantity(Math.max(1, Number(event.target.value) || 1))}
                   inputMode="numeric"
                 />
-                <button onClick={() => setQuantity((value) => Math.min(50, value + 1))}>+</button>
+                <button type="button" onClick={() => setQuantity((value) => Math.min(50, value + 1))}>+</button>
               </div>
             </label>
+          </div>
 
-            <div className="margin-preview">
-              <div><span>保证金</span><strong>{money(orderMargin)}</strong></div>
-              <div><span>可开</span><strong>{Math.max(0, Math.floor((available * leverage) / Math.max(markPrice, 1)))} 张</strong></div>
-              <div><span>汇率</span><strong>1 USDT ≈ {USDT_CNY_RATE} ¥</strong></div>
-            </div>
+          {orderType !== 'market' && (
+            <label className="field compact-field">
+              <span>
+                委托价
+                <button type="button" onClick={() => setPickMode('limit')}>点图</button>
+              </span>
+              <input
+                value={limitPrice}
+                onChange={(event) => setLimitPrice(event.target.value)}
+                placeholder={priceText(current.close)}
+                inputMode="decimal"
+              />
+            </label>
+          )}
 
-            <div className="tp-sl-grid">
-              <label>
-                <span>
-                  止盈
-                  <button type="button" onClick={() => { setPickMode('tp'); setMobileTab('chart'); }}>点图</button>
-                </span>
-                <input value={takeProfit} onChange={(event) => setTakeProfit(event.target.value)} placeholder="可选" inputMode="decimal" />
-              </label>
-              <label>
-                <span>
-                  止损
-                  <button type="button" onClick={() => { setPickMode('sl'); setMobileTab('chart'); }}>点图</button>
-                </span>
-                <input value={stopLoss} onChange={(event) => setStopLoss(event.target.value)} placeholder="可选" inputMode="decimal" />
-              </label>
-            </div>
+          <div className="tp-sl-grid compact">
+            <label>
+              <span>
+                止盈
+                <button type="button" onClick={() => setPickMode('tp')}>点图</button>
+              </span>
+              <input value={takeProfit} onChange={(event) => setTakeProfit(event.target.value)} placeholder="可选" inputMode="decimal" />
+            </label>
+            <label>
+              <span>
+                止损
+                <button type="button" onClick={() => setPickMode('sl')}>点图</button>
+              </span>
+              <input value={stopLoss} onChange={(event) => setStopLoss(event.target.value)} placeholder="可选" inputMode="decimal" />
+            </label>
+          </div>
 
-            <div className="order-actions">
-              <button className="buy" onClick={() => placeOrder('buy')}>
-                <span>买入开多</span>
-                <strong>{priceText(orderType === 'market' ? quotes.ask : Number(limitPrice) || quotes.ask)}</strong>
-              </button>
-              <button className="sell" onClick={() => placeOrder('sell')}>
-                <span>卖出开空</span>
-                <strong>{priceText(orderType === 'market' ? quotes.bid : Number(limitPrice) || quotes.bid)}</strong>
-              </button>
-            </div>
+          <div className="margin-line">
+            <span>保证金 {money(orderMargin)}</span>
+            <span>可开 {Math.max(0, Math.floor((available * leverage) / Math.max(markPrice, 1)))}张</span>
+            <span>{priceText(quotes.bid)} / {priceText(quotes.ask)}</span>
+          </div>
 
-            <button className="close-btn" onClick={closePosition} disabled={position.quantity === 0}>
-              {position.quantity === 0 ? '当前无持仓' : `市价平仓 ${Math.abs(position.quantity)} 张`}
+          <div className="order-actions compact">
+            <button className="buy" onClick={() => placeOrder('buy')}>
+              <span>开多</span>
+              <strong>{priceText(orderType === 'market' ? quotes.ask : Number(limitPrice) || quotes.ask)}</strong>
             </button>
-          </section>
-        )}
+            <button className="sell" onClick={() => placeOrder('sell')}>
+              <span>开空</span>
+              <strong>{priceText(orderType === 'market' ? quotes.bid : Number(limitPrice) || quotes.bid)}</strong>
+            </button>
+            <button className="flat" onClick={closePosition} disabled={position.quantity === 0}>
+              平仓
+            </button>
+          </div>
+        </section>
+      </main>
 
-        {mobileTab === 'account' && (
-          <section className="account-view">
-            <div className="account-summary okx-summary">
-              <div><span>账户权益</span><strong>{money(equity)}</strong></div>
-              <div><span>未实现盈亏</span><strong className={floating >= 0 ? 'up' : 'down'}>{money(floating)}</strong></div>
-              <div><span>已实现盈亏</span><strong className={position.realizedPnl >= 0 ? 'up' : 'down'}>{money(position.realizedPnl)}</strong></div>
-              <div><span>占用保证金</span><strong>{money(usedMargin)}</strong></div>
+      {sheetOpen && (
+        <div className="sheet-backdrop" onClick={() => setSheetOpen(false)} role="presentation">
+          <section className="account-sheet" onClick={(event) => event.stopPropagation()} aria-label="持仓账户">
+            <header className="sheet-head">
+              <strong>账户</strong>
+              <button type="button" onClick={() => setSheetOpen(false)} aria-label="关闭"><X size={16} /></button>
+            </header>
+            <div className="account-summary okx-summary compact">
+              <div><span>权益</span><strong>{money(equity)}</strong></div>
+              <div><span>未实现</span><strong className={floating >= 0 ? 'up' : 'down'}>{money(floating)}</strong></div>
               <div><span>可用</span><strong>{money(available)}</strong></div>
-              <div><span>收益率</span><strong className={roe >= 0 ? 'up' : 'down'}>{roe.toFixed(2)}%</strong></div>
             </div>
-
-            <div className="panel-tabs">
+            <div className="panel-tabs compact">
               <button className={accountTab === 'positions' ? 'active' : ''} onClick={() => setAccountTab('positions')}>持仓</button>
               <button className={accountTab === 'orders' ? 'active' : ''} onClick={() => setAccountTab('orders')}>委托 {orders.length || ''}</button>
               <button className={accountTab === 'fills' ? 'active' : ''} onClick={() => setAccountTab('fills')}>成交 {fills.length || ''}</button>
             </div>
-
             <div className="list-scroll">
               {accountTab === 'positions' && (
                 position.quantity === 0 ? (
-                  <div className="empty">暂无持仓，去「交易」页开仓</div>
+                  <div className="empty">暂无持仓</div>
                 ) : (
                   <div className="position-card okx-position">
                     <div className="row-between">
@@ -905,15 +867,10 @@ export default function App() {
                       <span>未实现盈亏</span>
                       <strong className={floating >= 0 ? 'up' : 'down'}>{money(floating)}</strong>
                     </div>
-                    <div className="kv">
-                      <span>止盈 {position.takeProfit ? priceText(position.takeProfit) : '—'}</span>
-                      <span>止损 {position.stopLoss ? priceText(position.stopLoss) : '—'}</span>
-                    </div>
                     <button onClick={closePosition}>市价平仓</button>
                   </div>
                 )
               )}
-
               {accountTab === 'orders' && (
                 orders.length === 0 ? (
                   <div className="empty">暂无挂单</div>
@@ -931,7 +888,6 @@ export default function App() {
                   ))
                 )
               )}
-
               {accountTab === 'fills' && (
                 fills.length === 0 ? (
                   <div className="empty">暂无成交</div>
@@ -952,23 +908,8 @@ export default function App() {
               )}
             </div>
           </section>
-        )}
-      </main>
-
-      <nav className="bottom-nav" aria-label="主导航">
-        <button className={mobileTab === 'chart' ? 'active' : ''} onClick={() => setMobileTab('chart')}>
-          <CandlestickChart size={20} />
-          <span>行情</span>
-        </button>
-        <button className={mobileTab === 'trade' ? 'active' : ''} onClick={() => setMobileTab('trade')}>
-          <WalletCards size={20} />
-          <span>交易</span>
-        </button>
-        <button className={mobileTab === 'account' ? 'active' : ''} onClick={() => setMobileTab('account')}>
-          <BriefcaseBusiness size={20} />
-          <span>账户</span>
-        </button>
-      </nav>
+        </div>
+      )}
 
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
