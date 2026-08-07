@@ -14,21 +14,28 @@
 
 ## 直接安装 APK（推荐）
 
-仓库内已提供可直接安装的调试包：
+请优先使用 GitHub Release 下载（比仓库 raw 链接更稳定，手机可直接保存安装）：
 
-- [`releases/replay-trader-cn-debug.apk`](./releases/replay-trader-cn-debug.apk)
+- [Release 页面](https://github.com/yanghuaiyu6/K-/releases/tag/v0.1.0-debug)
+- [直接下载 APK](https://github.com/yanghuaiyu6/K-/releases/download/v0.1.0-debug/replay-trader-cn-debug.apk)
+
+备用：
+
+- Cursor 产物：[replay-trader-cn-debug.apk](https://cursor.com/agents/bc-d119f61f-6956-4dc3-92ab-46cecbcb0959/artifacts?path=%2Fopt%2Fcursor%2Fartifacts%2Freplay-trader-cn-debug.apk)
+- 仓库文件：`releases/replay-trader-cn-debug.apk`
 
 安装步骤：
 
-1. 把 APK 传到手机（微信/浏览器下载均可）
-2. 打开文件，允许「安装未知应用」
-3. 安装完成后启动「复盘交易室」
+1. 用手机浏览器（Chrome / 系统浏览器，不要用微信内置浏览器）打开下载链接
+2. 下载完成后允许「安装未知应用」
+3. 安装并打开「复盘交易室」
 
 说明：
 
 - 这是 debug 签名包，适合自测，不是应用商店正式发布版
 - 应用离线可用，行情为本地模拟数据
 - 包名：`com.replaytrader.cn`
+- 若 GitHub 打不开，可先用电脑下载后再传到手机
 
 ## 本地网页运行
 
