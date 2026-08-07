@@ -28,6 +28,7 @@ export interface Position {
   realizedPnl: number;
   takeProfit: number | null;
   stopLoss: number | null;
+  leverage: number;
 }
 
 export interface PendingOrder {
@@ -39,6 +40,7 @@ export interface PendingOrder {
   takeProfit: number | null;
   stopLoss: number | null;
   createdAt: number;
+  leverage: number;
 }
 
 export interface Fill {
@@ -137,7 +139,7 @@ export function generateMarketData(symbol: MarketSymbol, timeframe: Timeframe, c
 }
 
 export function emptyPosition(): Position {
-  return { quantity: 0, averagePrice: 0, realizedPnl: 0, takeProfit: null, stopLoss: null };
+  return { quantity: 0, averagePrice: 0, realizedPnl: 0, takeProfit: null, stopLoss: null, leverage: 10 };
 }
 
 export function marketQuotes(symbol: MarketSymbol, mid: number) {
@@ -155,6 +157,7 @@ export function applyFill(
   quantity: number,
   price: number,
   fee: number,
+  leverage = position.leverage || 10,
 ): { position: Position; realizedPnl: number } {
   const signed = side === 'buy' ? quantity : -quantity;
   const current = position.quantity;
@@ -169,6 +172,7 @@ export function applyFill(
         quantity: nextQuantity,
         averagePrice,
         realizedPnl: position.realizedPnl - fee,
+        leverage: current === 0 ? leverage : position.leverage,
       },
       realizedPnl: -fee,
     };
@@ -191,6 +195,7 @@ export function applyFill(
       realizedPnl: position.realizedPnl + tradePnl,
       takeProfit: nextQuantity === 0 ? null : position.takeProfit,
       stopLoss: nextQuantity === 0 ? null : position.stopLoss,
+      leverage: nextQuantity === 0 ? leverage : Math.sign(nextQuantity) === Math.sign(current) ? position.leverage : leverage,
     },
     realizedPnl: tradePnl,
   };
@@ -225,7 +230,14 @@ export function matchPendingOrders(
       continue;
     }
 
-    const result = applyFill(nextPosition, order.side, order.quantity, order.price, symbol.commission * order.quantity);
+    const result = applyFill(
+      nextPosition,
+      order.side,
+      order.quantity,
+      order.price,
+      symbol.commission * order.quantity,
+      order.leverage || nextPosition.leverage || 10,
+    );
     nextPosition = {
       ...result.position,
       takeProfit: order.takeProfit,
@@ -298,20 +310,83 @@ export function matchProtectiveOrders(
   return { position: next, fills };
 }
 
-export function formatPrice(price: number, symbol: MarketSymbol) {
-  const decimals = symbol.tickSize >= 1 ? 2 : symbol.tickSize >= 0.1 ? 1 : symbol.tickSize >= 0.01 ? 2 : 4;
-  return price.toLocaleString('zh-CN', {
+export type CurrencyUnit = 'USDT' | 'CNY';
+
+/** 演示用固定汇率，便于 USDT / 人民币切换展示 */
+export const USDT_CNY_RATE = 7.25;
+
+export const LEVERAGE_OPTIONS = [1, 2, 3, 5, 10, 20, 50, 75, 100] as const;
+
+export function toDisplayAmount(usdtValue: number, unit: CurrencyUnit) {
+  return unit === 'CNY' ? usdtValue * USDT_CNY_RATE : usdtValue;
+}
+
+export function formatPrice(price: number, symbol: MarketSymbol, unit: CurrencyUnit = 'USDT') {
+  const scaled = toDisplayAmount(price, unit);
+  const decimals =
+    unit === 'CNY'
+      ? symbol.tickSize >= 1
+        ? 2
+        : 2
+      : symbol.tickSize >= 1
+        ? 2
+        : symbol.tickSize >= 0.1
+          ? 1
+          : symbol.tickSize >= 0.01
+            ? 2
+            : 4;
+  return scaled.toLocaleString('zh-CN', {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });
 }
 
-export function formatMoney(value: number) {
-  return new Intl.NumberFormat('zh-CN', {
-    style: 'currency',
-    currency: 'USD',
+export function formatMoney(value: number, unit: CurrencyUnit = 'USDT') {
+  const scaled = toDisplayAmount(value, unit);
+  if (unit === 'CNY') {
+    return `¥${scaled.toLocaleString('zh-CN', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
+  }
+  return `${scaled.toLocaleString('zh-CN', {
     minimumFractionDigits: 2,
-  }).format(value);
+    maximumFractionDigits: 2,
+  })} USDT`;
+}
+
+export function unitLabel(unit: CurrencyUnit) {
+  return unit === 'CNY' ? '人民币' : 'USDT';
+}
+
+export function contractNotional(price: number, quantity: number) {
+  return Math.abs(price * quantity);
+}
+
+export function positionMargin(price: number, quantity: number, leverage: number) {
+  return contractNotional(price, quantity) / Math.max(1, leverage);
+}
+
+export function unrealizedPnl(position: Position, markPrice: number) {
+  if (position.quantity === 0) return 0;
+  return (markPrice - position.averagePrice) * position.quantity;
+}
+
+export function unrealizedRoe(position: Position, markPrice: number, leverage: number) {
+  if (position.quantity === 0) return 0;
+  const margin = positionMargin(position.averagePrice, position.quantity, leverage);
+  if (margin <= 0) return 0;
+  return (unrealizedPnl(position, markPrice) / margin) * 100;
+}
+
+/** 简化的隔离保证金预估强平价（演示用） */
+export function estimateLiquidationPrice(position: Position, leverage: number, maintenanceRate = 0.005) {
+  if (position.quantity === 0) return null;
+  const entry = position.averagePrice;
+  if (position.quantity > 0) {
+    return Math.max(0, entry * (1 - 1 / leverage + maintenanceRate));
+  }
+  return entry * (1 + 1 / leverage - maintenanceRate);
 }
 
 export function formatTime(time: number) {

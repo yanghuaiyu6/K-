@@ -3,10 +3,16 @@ import {
   applyFill,
   computeMacd,
   emptyPosition,
+  estimateLiquidationPrice,
+  formatMoney,
+  formatPrice,
   generateMarketData,
   getSymbol,
   matchPendingOrders,
   matchProtectiveOrders,
+  toDisplayAmount,
+  unrealizedPnl,
+  unrealizedRoe,
 } from './market';
 
 export const tests = [
@@ -40,6 +46,7 @@ export const tests = [
         realizedPnl: 0,
         takeProfit: 110,
         stopLoss: 90,
+        leverage: 10,
       };
       const result = matchProtectiveOrders(
         position,
@@ -65,6 +72,7 @@ export const tests = [
             takeProfit: null,
             stopLoss: null,
             createdAt: 1,
+            leverage: 20,
           },
         ],
         { time: 2, open: 1.081, high: 1.082, low: 1.079, close: 1.08, volume: 8 },
@@ -73,7 +81,29 @@ export const tests = [
       );
       equal(result.remainingOrders.length, 0);
       equal(result.position.quantity, 1);
+      equal(result.position.leverage, 20);
       equal(result.fills[0].reason, 'limit');
+    },
+  },
+  {
+    name: 'USDT/CNY formatting and contract PnL helpers work',
+    run() {
+      const symbol = getSymbol('NAS100');
+      equal(formatMoney(100, 'USDT').includes('USDT'), true);
+      equal(formatMoney(100, 'CNY').startsWith('¥'), true);
+      equal(toDisplayAmount(100, 'CNY'), 725);
+      const position = {
+        quantity: 2,
+        averagePrice: 100,
+        realizedPnl: 0,
+        takeProfit: null,
+        stopLoss: null,
+        leverage: 10,
+      };
+      equal(unrealizedPnl(position, 110), 20);
+      equal(Math.round(unrealizedRoe(position, 110, 10)), 100);
+      equal(estimateLiquidationPrice(position, 10) !== null, true);
+      equal(formatPrice(100, symbol, 'CNY').length > 0, true);
     },
   },
   {

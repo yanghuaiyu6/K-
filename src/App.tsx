@@ -17,10 +17,13 @@ import { ChartPane } from './components/ChartPane';
 import {
   SYMBOLS,
   TIMEFRAMES,
+  LEVERAGE_OPTIONS,
+  USDT_CNY_RATE,
   applyFill,
   computeMacd,
   computeStats,
   emptyPosition,
+  estimateLiquidationPrice,
   formatMoney,
   formatPrice,
   formatTime,
@@ -29,7 +32,12 @@ import {
   marketQuotes,
   matchPendingOrders,
   matchProtectiveOrders,
+  positionMargin,
   roundToTick,
+  unitLabel,
+  unrealizedPnl,
+  unrealizedRoe,
+  type CurrencyUnit,
   type Fill,
   type OrderType,
   type PendingOrder,
@@ -52,7 +60,7 @@ const DEFAULT_CONFIG: SessionConfig = {
   blindMode: false,
 };
 
-const MOBILE_SPEEDS = [1, 2, 5, 10, 20] as const;
+const MOBILE_SPEEDS = [0.5, 1, 2, 5, 10, 20, 50] as const;
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('setup');
@@ -68,6 +76,8 @@ export default function App() {
   const [speed, setSpeed] = useState(1);
   const [orderType, setOrderType] = useState<OrderType>('market');
   const [quantity, setQuantity] = useState(1);
+  const [leverage, setLeverage] = useState(10);
+  const [currency, setCurrency] = useState<CurrencyUnit>('USDT');
   const [limitPrice, setLimitPrice] = useState('');
   const [takeProfit, setTakeProfit] = useState('');
   const [stopLoss, setStopLoss] = useState('');
@@ -81,16 +91,26 @@ export default function App() {
 
   const current = candles[playhead] ?? candles[0];
   const quotes = marketQuotes(symbol, current.close);
-  const unrealized =
-    position.quantity === 0 ? 0 : (current.close - position.averagePrice) * position.quantity;
-  const equity = config.startCapital + position.realizedPnl + unrealized;
+  const markPrice = current.close;
+  const activeLeverage = position.quantity !== 0 ? position.leverage : leverage;
+  const floating = unrealizedPnl(position, markPrice);
+  const roe = unrealizedRoe(position, markPrice, activeLeverage);
+  const usedMargin =
+    position.quantity === 0 ? 0 : positionMargin(position.averagePrice, position.quantity, activeLeverage);
+  const orderMargin = positionMargin(markPrice, quantity, leverage);
+  const available = config.startCapital + position.realizedPnl - usedMargin;
+  const equity = config.startCapital + position.realizedPnl + floating;
+  const liqPrice = estimateLiquidationPrice(position, activeLeverage);
   const progress = (playhead / Math.max(1, candles.length - 1)) * 100;
-  const displaySymbol = config.blindMode ? 'BLIND' : symbol.code;
+  const displaySymbol = config.blindMode ? 'BLIND-USDT' : `${symbol.code}-USDT`;
   const stats = useMemo(() => computeStats(fills, config.startCapital), [fills, config.startCapital]);
   const macd = useMemo(
     () => computeMacd(candles.slice(0, playhead + 1)).at(-1),
     [candles, playhead],
   );
+
+  const money = (value: number) => formatMoney(value, currency);
+  const priceText = (value: number) => formatPrice(value, symbol, currency);
 
   const resetTradingState = (nextConfig = config) => {
     setPlayhead(nextConfig.startOffset);
@@ -197,16 +217,17 @@ export default function App() {
           takeProfit: tp,
           stopLoss: sl,
           createdAt: current.time,
+          leverage,
         },
         ...currentOrders,
       ]);
       setAccountTab('orders');
       setMobileTab('account');
-      setToast(`${side === 'buy' ? '买入' : '卖出'}委托已挂单`);
+      setToast(`${side === 'buy' ? '买入' : '卖出'}委托已挂单 · ${leverage}x`);
       return;
     }
 
-    const result = applyFill(position, side, quantity, price, symbol.commission * quantity);
+    const result = applyFill(position, side, quantity, price, symbol.commission * quantity, leverage);
     setPosition({
       ...result.position,
       takeProfit: tp ?? result.position.takeProfit,
@@ -226,7 +247,7 @@ export default function App() {
       ...currentFills,
     ]);
     setAccountTab('positions');
-    setToast(`${side === 'buy' ? '买入' : '卖出'} ${quantity} 手成功`);
+    setToast(`${side === 'buy' ? '开多' : '开空'} ${quantity} 张 · ${leverage}x`);
   };
 
   const closePosition = () => {
@@ -234,7 +255,7 @@ export default function App() {
     const side: Side = position.quantity > 0 ? 'sell' : 'buy';
     const qty = Math.abs(position.quantity);
     const price = side === 'buy' ? quotes.ask : quotes.bid;
-    const result = applyFill(position, side, qty, price, symbol.commission * qty);
+    const result = applyFill(position, side, qty, price, symbol.commission * qty, position.leverage);
     setPosition(emptyPosition());
     setFills((currentFills) => [
       {
@@ -249,7 +270,7 @@ export default function App() {
       },
       ...currentFills,
     ]);
-    setToast('已市价平仓');
+    setToast(`已平仓 · 实现盈亏 ${money(result.realizedPnl)}`);
     setAccountTab('fills');
   };
 
@@ -259,7 +280,7 @@ export default function App() {
     else if (pickMode === 'sl') setStopLoss(String(rounded));
     else setLimitPrice(String(rounded));
     setPickMode(null);
-    setToast(`已选 ${formatPrice(rounded, symbol)}`);
+    setToast(`已选 ${priceText(rounded)}`);
     setMobileTab('trade');
   };
 
@@ -310,7 +331,7 @@ export default function App() {
           </label>
 
           <label>
-            <span>起始资金</span>
+            <span>起始保证金（USDT）</span>
             <div className="chip-row">
               {[50_000, 100_000, 200_000].map((amount) => (
                 <button
@@ -321,6 +342,23 @@ export default function App() {
                   {(amount / 1000).toFixed(0)}K
                 </button>
               ))}
+            </div>
+          </label>
+
+          <label>
+            <span>默认杠杆</span>
+            <select value={leverage} onChange={(event) => setLeverage(Number(event.target.value))}>
+              {LEVERAGE_OPTIONS.map((item) => (
+                <option key={item} value={item}>{item}x</option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            <span>计价单位</span>
+            <div className="currency-toggle">
+              <button type="button" className={currency === 'USDT' ? 'active' : ''} onClick={() => setCurrency('USDT')}>USDT</button>
+              <button type="button" className={currency === 'CNY' ? 'active' : ''} onClick={() => setCurrency('CNY')}>人民币</button>
             </div>
           </label>
 
@@ -339,8 +377,9 @@ export default function App() {
           </label>
 
           <div className="setup-meta">
-            <span>点差 {formatPrice(symbol.spreadTicks * symbol.tickSize, symbol)}</span>
-            <span>手续费 {formatMoney(symbol.commission)}</span>
+            <span>点差 {priceText(symbol.spreadTicks * symbol.tickSize)}</span>
+            <span>手续费 {money(symbol.commission)}</span>
+            <span>1 USDT ≈ {USDT_CNY_RATE} ¥</span>
           </div>
         </section>
 
@@ -359,17 +398,21 @@ export default function App() {
             <p className="eyebrow">会话报告</p>
             <h1>{displaySymbol} · {TIMEFRAMES.find((item) => item.id === config.timeframe)?.label}</h1>
           </div>
+          <div className="currency-toggle compact">
+            <button className={currency === 'USDT' ? 'active' : ''} onClick={() => setCurrency('USDT')}>USDT</button>
+            <button className={currency === 'CNY' ? 'active' : ''} onClick={() => setCurrency('CNY')}>人民币</button>
+          </div>
           <button className="ghost" onClick={() => setScreen('setup')}><X size={16} /></button>
         </header>
 
         <section className="report-grid">
           <div className="report-hero">
-            <span>净盈亏</span>
-            <strong className={stats.netPnl >= 0 ? 'up' : 'down'}>{formatMoney(stats.netPnl)}</strong>
+            <span>净盈亏（{unitLabel(currency)}）</span>
+            <strong className={stats.netPnl >= 0 ? 'up' : 'down'}>{money(stats.netPnl)}</strong>
           </div>
           <div className="stat"><span>胜率</span><strong>{(stats.winRate * 100).toFixed(1)}%</strong></div>
           <div className="stat"><span>获利因子</span><strong>{Number.isFinite(stats.profitFactor) ? stats.profitFactor.toFixed(2) : '∞'}</strong></div>
-          <div className="stat"><span>最大回撤</span><strong className="down">{formatMoney(stats.maxDrawdown)}</strong></div>
+          <div className="stat"><span>最大回撤</span><strong className="down">{money(stats.maxDrawdown)}</strong></div>
           <div className="stat"><span>平仓笔数</span><strong>{stats.trades}</strong></div>
         </section>
 
@@ -382,12 +425,12 @@ export default function App() {
               fills.slice(0, 12).map((fill) => (
                 <div className="list-item" key={fill.id}>
                   <div>
-                    <strong className={fill.side === 'buy' ? 'up' : 'down'}>{fill.side === 'buy' ? '买入' : '卖出'} {fill.quantity}手</strong>
+                    <strong className={fill.side === 'buy' ? 'up' : 'down'}>{fill.side === 'buy' ? '买入' : '卖出'} {fill.quantity}张</strong>
                     <span>{formatTime(fill.time)}</span>
                   </div>
                   <div className="right">
-                    <strong>{formatPrice(fill.price, symbol)}</strong>
-                    <span className={fill.realizedPnl >= 0 ? 'up' : 'down'}>{formatMoney(fill.realizedPnl)}</span>
+                    <strong>{priceText(fill.price)}</strong>
+                    <span className={fill.realizedPnl >= 0 ? 'up' : 'down'}>{money(fill.realizedPnl)}</span>
                   </div>
                 </div>
               ))
@@ -410,16 +453,36 @@ export default function App() {
       <header className="mobile-top">
         <div className="symbol-block">
           <strong>{displaySymbol}</strong>
-          <span>{TIMEFRAMES.find((item) => item.id === config.timeframe)?.label} · {formatTime(current.time)}</span>
+          <span>{TIMEFRAMES.find((item) => item.id === config.timeframe)?.label} · 永续</span>
         </div>
-        <div className="pnl-block">
-          <strong className={unrealized + position.realizedPnl >= 0 ? 'up' : 'down'}>
-            {formatMoney(unrealized + position.realizedPnl)}
-          </strong>
-          <span>权益 {formatMoney(equity)}</span>
+        <div className="currency-toggle">
+          <button className={currency === 'USDT' ? 'active' : ''} onClick={() => setCurrency('USDT')}>USDT</button>
+          <button className={currency === 'CNY' ? 'active' : ''} onClick={() => setCurrency('CNY')}>¥</button>
         </div>
         <button className="end-chip" onClick={endSession}>结束</button>
       </header>
+
+      <section className="okx-ticker" aria-label="合约行情">
+        <div>
+          <span>最新价</span>
+          <strong className={floating >= 0 ? 'up' : 'down'}>{priceText(markPrice)}</strong>
+        </div>
+        <div>
+          <span>标记价格</span>
+          <strong>{priceText(markPrice)}</strong>
+        </div>
+        <div>
+          <span>实时盈亏</span>
+          <strong className={floating >= 0 ? 'up' : 'down'}>
+            {money(floating)}
+            <em>{position.quantity === 0 ? '' : ` (${roe >= 0 ? '+' : ''}${roe.toFixed(2)}%)`}</em>
+          </strong>
+        </div>
+        <div>
+          <span>可用</span>
+          <strong>{money(available)}</strong>
+        </div>
+      </section>
 
       <main className="mobile-main">
         {mobileTab === 'chart' && (
@@ -440,9 +503,9 @@ export default function App() {
                 ))}
               </div>
               <div className="quote-mini">
-                <span className="up">{formatPrice(quotes.bid, symbol)}</span>
+                <span className="up">{priceText(quotes.bid)}</span>
                 <span>/</span>
-                <span className="down">{formatPrice(quotes.ask, symbol)}</span>
+                <span className="down">{priceText(quotes.ask)}</span>
               </div>
             </div>
 
@@ -468,26 +531,52 @@ export default function App() {
                 <i style={{ width: `${progress}%` }} />
               </div>
               <div className="replay-row">
-                <button onClick={() => setPlayhead(0)} aria-label="开始"><SkipBack size={18} /></button>
-                <button onClick={() => { setPlaying(false); setPlayhead((value) => Math.max(0, value - 1)); }} aria-label="上一根"><StepBack size={18} /></button>
-                <button className="play" onClick={() => setPlaying((value) => !value)} aria-label="播放暂停">
-                  {playing ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
+                <button type="button" className="ctrl" onClick={() => setPlayhead(0)} aria-label="回到开始">
+                  <SkipBack size={16} />
                 </button>
-                <button onClick={() => { setPlaying(false); setPlayhead((value) => Math.min(candles.length - 1, value + 1)); }} aria-label="下一根"><StepForward size={18} /></button>
-                <button onClick={() => setPlayhead(candles.length - 1)} aria-label="结束"><SkipForward size={18} /></button>
-                <div className="speed-mini">
-                  {(MOBILE_SPEEDS as readonly number[]).map((item) => (
-                    <button key={item} className={speed === item ? 'active' : ''} onClick={() => setSpeed(item)}>
-                      {item}x
-                    </button>
-                  ))}
-                </div>
+                <button
+                  type="button"
+                  className="ctrl"
+                  onClick={() => { setPlaying(false); setPlayhead((value) => Math.max(0, value - 1)); }}
+                  aria-label="上一根K线"
+                >
+                  <StepBack size={16} />
+                </button>
+                <button
+                  type="button"
+                  className={`play-toggle ${playing ? 'is-playing' : 'is-paused'}`}
+                  onClick={() => setPlaying((value) => !value)}
+                  aria-label={playing ? '暂停回放' : '开始回放'}
+                >
+                  {playing ? <Pause size={18} /> : <Play size={18} />}
+                  <span>{playing ? '暂停' : '播放'}</span>
+                </button>
+                <button
+                  type="button"
+                  className="ctrl"
+                  onClick={() => { setPlaying(false); setPlayhead((value) => Math.min(candles.length - 1, value + 1)); }}
+                  aria-label="下一根K线"
+                >
+                  <StepForward size={16} />
+                </button>
+                <button type="button" className="ctrl" onClick={() => setPlayhead(candles.length - 1)} aria-label="跳到最后">
+                  <SkipForward size={16} />
+                </button>
+                <label className="speed-select">
+                  <span>速率</span>
+                  <select value={speed} onChange={(event) => setSpeed(Number(event.target.value))}>
+                    {MOBILE_SPEEDS.map((item) => (
+                      <option key={item} value={item}>{item}x</option>
+                    ))}
+                  </select>
+                </label>
               </div>
               <div className="macd-mini">
                 <span>MACD</span>
                 <span>DIF {macd ? macd.dif.toFixed(2) : '—'}</span>
                 <span>DEA {macd ? macd.dea.toFixed(2) : '—'}</span>
                 <span className={macd && macd.hist >= 0 ? 'up' : 'down'}>柱 {macd ? macd.hist.toFixed(2) : '—'}</span>
+                <span>{formatTime(current.time)}</span>
               </div>
             </div>
           </section>
@@ -509,36 +598,51 @@ export default function App() {
 
             <div className="trade-price-card">
               <div>
-                <span>买价</span>
-                <strong className="up">{formatPrice(quotes.bid, symbol)}</strong>
+                <span>买一</span>
+                <strong className="up">{priceText(quotes.bid)}</strong>
               </div>
               <div>
-                <span>卖价</span>
-                <strong className="down">{formatPrice(quotes.ask, symbol)}</strong>
+                <span>卖一</span>
+                <strong className="down">{priceText(quotes.ask)}</strong>
               </div>
               <div>
                 <span>点差</span>
-                <strong>{formatPrice(quotes.spread, symbol)}</strong>
+                <strong>{priceText(quotes.spread)}</strong>
               </div>
             </div>
+
+            <label className="field">
+              <span>杠杆</span>
+              <div className="leverage-row">
+                {LEVERAGE_OPTIONS.map((item) => (
+                  <button
+                    key={item}
+                    className={leverage === item ? 'active' : ''}
+                    onClick={() => setLeverage(item)}
+                  >
+                    {item}x
+                  </button>
+                ))}
+              </div>
+            </label>
 
             {orderType !== 'market' && (
               <label className="field">
                 <span>
-                  委托价格
+                  委托价格（{unitLabel(currency)}）
                   <button type="button" onClick={() => { setPickMode('limit'); setMobileTab('chart'); }}>点图选价</button>
                 </span>
                 <input
                   value={limitPrice}
                   onChange={(event) => setLimitPrice(event.target.value)}
-                  placeholder={formatPrice(current.close, symbol)}
+                  placeholder={priceText(current.close)}
                   inputMode="decimal"
                 />
               </label>
             )}
 
             <label className="field">
-              <span>手数</span>
+              <span>数量（张）</span>
               <div className="stepper">
                 <button onClick={() => setQuantity((value) => Math.max(1, value - 1))}>−</button>
                 <input
@@ -549,6 +653,12 @@ export default function App() {
                 <button onClick={() => setQuantity((value) => Math.min(50, value + 1))}>+</button>
               </div>
             </label>
+
+            <div className="margin-preview">
+              <div><span>保证金</span><strong>{money(orderMargin)}</strong></div>
+              <div><span>可开</span><strong>{Math.max(0, Math.floor((available * leverage) / Math.max(markPrice, 1)))} 张</strong></div>
+              <div><span>汇率</span><strong>1 USDT ≈ {USDT_CNY_RATE} ¥</strong></div>
+            </div>
 
             <div className="tp-sl-grid">
               <label>
@@ -569,27 +679,30 @@ export default function App() {
 
             <div className="order-actions">
               <button className="buy" onClick={() => placeOrder('buy')}>
-                <span>买入做多</span>
-                <strong>{formatPrice(orderType === 'market' ? quotes.ask : Number(limitPrice) || quotes.ask, symbol)}</strong>
+                <span>买入开多</span>
+                <strong>{priceText(orderType === 'market' ? quotes.ask : Number(limitPrice) || quotes.ask)}</strong>
               </button>
               <button className="sell" onClick={() => placeOrder('sell')}>
-                <span>卖出做空</span>
-                <strong>{formatPrice(orderType === 'market' ? quotes.bid : Number(limitPrice) || quotes.bid, symbol)}</strong>
+                <span>卖出开空</span>
+                <strong>{priceText(orderType === 'market' ? quotes.bid : Number(limitPrice) || quotes.bid)}</strong>
               </button>
             </div>
 
             <button className="close-btn" onClick={closePosition} disabled={position.quantity === 0}>
-              {position.quantity === 0 ? '当前无持仓' : `市价平仓 ${Math.abs(position.quantity)} 手`}
+              {position.quantity === 0 ? '当前无持仓' : `市价平仓 ${Math.abs(position.quantity)} 张`}
             </button>
           </section>
         )}
 
         {mobileTab === 'account' && (
           <section className="account-view">
-            <div className="account-summary">
-              <div><span>权益</span><strong>{formatMoney(equity)}</strong></div>
-              <div><span>浮动</span><strong className={unrealized >= 0 ? 'up' : 'down'}>{formatMoney(unrealized)}</strong></div>
-              <div><span>已实现</span><strong className={position.realizedPnl >= 0 ? 'up' : 'down'}>{formatMoney(position.realizedPnl)}</strong></div>
+            <div className="account-summary okx-summary">
+              <div><span>账户权益</span><strong>{money(equity)}</strong></div>
+              <div><span>未实现盈亏</span><strong className={floating >= 0 ? 'up' : 'down'}>{money(floating)}</strong></div>
+              <div><span>已实现盈亏</span><strong className={position.realizedPnl >= 0 ? 'up' : 'down'}>{money(position.realizedPnl)}</strong></div>
+              <div><span>占用保证金</span><strong>{money(usedMargin)}</strong></div>
+              <div><span>可用</span><strong>{money(available)}</strong></div>
+              <div><span>收益率</span><strong className={roe >= 0 ? 'up' : 'down'}>{roe.toFixed(2)}%</strong></div>
             </div>
 
             <div className="panel-tabs">
@@ -601,24 +714,31 @@ export default function App() {
             <div className="list-scroll">
               {accountTab === 'positions' && (
                 position.quantity === 0 ? (
-                  <div className="empty">暂无持仓，去「交易」页下单</div>
+                  <div className="empty">暂无持仓，去「交易」页开仓</div>
                 ) : (
-                  <div className="position-card">
+                  <div className="position-card okx-position">
                     <div className="row-between">
                       <strong>{displaySymbol}</strong>
                       <span className={position.quantity > 0 ? 'up' : 'down'}>
-                        {position.quantity > 0 ? '多' : '空'} {Math.abs(position.quantity)} 手
+                        {position.quantity > 0 ? '多' : '空'} · {activeLeverage}x
                       </span>
                     </div>
-                    <div className="kv">
-                      <span>均价 {formatPrice(position.averagePrice, symbol)}</span>
-                      <span>现价 {formatPrice(current.close, symbol)}</span>
+                    <div className="okx-grid">
+                      <div><span>持仓量</span><strong>{Math.abs(position.quantity)} 张</strong></div>
+                      <div><span>开仓均价</span><strong>{priceText(position.averagePrice)}</strong></div>
+                      <div><span>标记价格</span><strong>{priceText(markPrice)}</strong></div>
+                      <div><span>预估强平价</span><strong>{liqPrice == null ? '—' : priceText(liqPrice)}</strong></div>
+                      <div><span>保证金</span><strong>{money(usedMargin)}</strong></div>
+                      <div><span>收益率</span><strong className={roe >= 0 ? 'up' : 'down'}>{roe.toFixed(2)}%</strong></div>
+                    </div>
+                    <div className="live-pnl">
+                      <span>未实现盈亏</span>
+                      <strong className={floating >= 0 ? 'up' : 'down'}>{money(floating)}</strong>
                     </div>
                     <div className="kv">
-                      <span>止盈 {position.takeProfit ? formatPrice(position.takeProfit, symbol) : '—'}</span>
-                      <span>止损 {position.stopLoss ? formatPrice(position.stopLoss, symbol) : '—'}</span>
+                      <span>止盈 {position.takeProfit ? priceText(position.takeProfit) : '—'}</span>
+                      <span>止损 {position.stopLoss ? priceText(position.stopLoss) : '—'}</span>
                     </div>
-                    <strong className={unrealized >= 0 ? 'up' : 'down'}>{formatMoney(unrealized)}</strong>
                     <button onClick={closePosition}>市价平仓</button>
                   </div>
                 )
@@ -634,7 +754,7 @@ export default function App() {
                         <strong className={order.side === 'buy' ? 'up' : 'down'}>
                           {order.side === 'buy' ? '买' : '卖'} · {order.type === 'limit' ? '限价' : '止损单'}
                         </strong>
-                        <span>{order.quantity} 手 @ {formatPrice(order.price, symbol)}</span>
+                        <span>{order.quantity} 张 · {order.leverage}x @ {priceText(order.price)}</span>
                       </div>
                       <button onClick={() => setOrders((value) => value.filter((item) => item.id !== order.id))}>撤单</button>
                     </div>
@@ -649,12 +769,12 @@ export default function App() {
                   fills.map((fill) => (
                     <div className="list-item" key={fill.id}>
                       <div>
-                        <strong className={fill.side === 'buy' ? 'up' : 'down'}>{fill.side === 'buy' ? '买' : '卖'} {fill.quantity}手</strong>
+                        <strong className={fill.side === 'buy' ? 'up' : 'down'}>{fill.side === 'buy' ? '买' : '卖'} {fill.quantity}张</strong>
                         <span>{formatTime(fill.time)}</span>
                       </div>
                       <div className="right">
-                        <strong>{formatPrice(fill.price, symbol)}</strong>
-                        <span className={fill.realizedPnl >= 0 ? 'up' : 'down'}>{formatMoney(fill.realizedPnl)}</span>
+                        <strong>{priceText(fill.price)}</strong>
+                        <span className={fill.realizedPnl >= 0 ? 'up' : 'down'}>{money(fill.realizedPnl)}</span>
                       </div>
                     </div>
                   ))
