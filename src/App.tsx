@@ -33,6 +33,7 @@ import {
   getSymbol,
   historyBarCount,
   marketQuotes,
+  matchLiquidation,
   matchPendingOrders,
   matchProtectiveOrders,
   maxReplayOffset,
@@ -105,6 +106,13 @@ export default function App() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [toast, setToast] = useState('');
   const [pickMode, setPickMode] = useState<PickMode>(null);
+  const [liquidated, setLiquidated] = useState(false);
+  const [chartOverlays, setChartOverlays] = useState({
+    cost: true,
+    liquidation: true,
+    protective: true,
+    orders: true,
+  });
 
   const current = candles[playhead] ?? candles[0];
   const quotes = marketQuotes(symbol, current.close);
@@ -139,6 +147,7 @@ export default function App() {
     setPickMode(null);
     setAccountTab('positions');
     setSheetOpen(false);
+    setLiquidated(false);
   };
 
   const jumpToReplay = (offset: number, label: string, quiet = false) => {
@@ -213,9 +222,22 @@ export default function App() {
   }, [playhead]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (screen !== 'practice') return;
+    if (screen !== 'practice' || liquidated) return;
     const candle = candles[playhead];
     if (!candle || position.quantity === 0) return;
+
+    const liq = matchLiquidation(position, candle, symbol, activeLeverage);
+    if (liq.liquidated) {
+      setPlaying(false);
+      setPosition(liq.position);
+      setOrders([]);
+      setFills((currentFills) => [...liq.fills, ...currentFills]);
+      setLiquidated(true);
+      setToast('已强平 · 练习结束');
+      window.setTimeout(() => setScreen('report'), 650);
+      return;
+    }
+
     const protective = matchProtectiveOrders(position, candle, symbol);
     if (protective.fills.length > 0) {
       setPosition(protective.position);
@@ -223,11 +245,11 @@ export default function App() {
       setToast(protective.fills[0].reason === 'takeProfit' ? '止盈已触发' : '止损已触发');
       setAccountTab('fills');
     }
-  }, [playhead, position.quantity, position.takeProfit, position.stopLoss]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [playhead, position.quantity, position.takeProfit, position.stopLoss, position.averagePrice, activeLeverage, liquidated]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!toast) return undefined;
-    const timer = window.setTimeout(() => setToast(''), 900);
+    const timer = window.setTimeout(() => setToast(''), 650);
     return () => window.clearTimeout(timer);
   }, [toast]);
 
@@ -537,6 +559,12 @@ export default function App() {
         </header>
 
         <section className="report-grid">
+          {liquidated && (
+            <div className="report-banner danger">
+              <strong>已强平 · 练习结束</strong>
+              <span>价格触及预估强平价，仓位已被强制平仓</span>
+            </div>
+          )}
           <div className="report-hero">
             <span>净盈亏（{unitLabel(currency)}）</span>
             <strong className={stats.netPnl >= 0 ? 'up' : 'down'}>{money(stats.netPnl)}</strong>
@@ -638,6 +666,26 @@ export default function App() {
             </button>
           </div>
 
+          <div className="overlay-toggles" aria-label="图表参考线">
+            {(
+              [
+                ['cost', '成本价'],
+                ['liquidation', '强平价'],
+                ['protective', '止盈止损'],
+                ['orders', '挂单'],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                className={chartOverlays[key] ? 'active' : ''}
+                onClick={() => setChartOverlays((value) => ({ ...value, [key]: !value[key] }))}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
           {pickMode && (
             <div className="pick-tip">
               {pickMode === 'replay'
@@ -654,6 +702,8 @@ export default function App() {
             fills={fills}
             orders={orders}
             position={position}
+            liquidationPrice={liqPrice}
+            overlays={chartOverlays}
             pickMode={pickMode === 'replay' ? 'bar' : pickMode ? 'price' : null}
             onPickPrice={onPickPrice}
             onPickBar={onPickBar}

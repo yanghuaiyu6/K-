@@ -11,6 +11,7 @@ import {
   getHistorySource,
   getSymbol,
   historyBarCount,
+  matchLiquidation,
   matchPendingOrders,
   matchProtectiveOrders,
   maxReplayOffset,
@@ -109,6 +110,29 @@ export const tests = [
       equal(random >= 60 && random <= maxReplayOffset(count), true);
       const index = findCandleIndexByTime(candles, candles[120].time);
       equal(index, 120);
+    },
+  },
+  {
+    name: 'liquidation closes long when candle trades through liq price',
+    run() {
+      const position = {
+        quantity: 2,
+        averagePrice: 100,
+        realizedPnl: 0,
+        takeProfit: null,
+        stopLoss: null,
+        leverage: 10,
+      };
+      const liq = estimateLiquidationPrice(position, 10)!;
+      const result = matchLiquidation(
+        position,
+        { time: 1, open: liq + 1, high: liq + 2, low: liq - 1, close: liq, volume: 10 },
+        getSymbol('NAS100'),
+        10,
+      );
+      equal(result.liquidated, true);
+      equal(result.position.quantity, 0);
+      equal(result.fills[0].reason, 'liquidation');
     },
   },
   {

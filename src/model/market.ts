@@ -51,7 +51,7 @@ export interface Fill {
   fee: number;
   time: number;
   realizedPnl: number;
-  reason: 'market' | 'limit' | 'stop' | 'takeProfit' | 'stopLoss' | 'close';
+  reason: 'market' | 'limit' | 'stop' | 'takeProfit' | 'stopLoss' | 'close' | 'liquidation';
 }
 
 export type StartMode = 'begin' | 'random' | 'custom';
@@ -467,6 +467,55 @@ export function matchProtectiveOrders(
   return { position: next, fills };
 }
 
+/** 价格触及预估强平价时强制平仓（演示用隔离保证金模型） */
+export function matchLiquidation(
+  position: Position,
+  candle: Candle,
+  symbol: MarketSymbol,
+  leverage = position.leverage || 10,
+  maintenanceRate = 0.005,
+): { position: Position; fills: Fill[]; liquidated: boolean } {
+  if (position.quantity === 0) {
+    return { position, fills: [], liquidated: false };
+  }
+
+  const liqPrice = estimateLiquidationPrice(position, leverage, maintenanceRate);
+  if (liqPrice == null) {
+    return { position, fills: [], liquidated: false };
+  }
+
+  const isLong = position.quantity > 0;
+  const hit = isLong ? candle.low <= liqPrice : candle.high >= liqPrice;
+  if (!hit) {
+    return { position, fills: [], liquidated: false };
+  }
+
+  const side: Side = isLong ? 'sell' : 'buy';
+  const qty = Math.abs(position.quantity);
+  const fillPrice = roundToTick(liqPrice, symbol.tickSize);
+  const result = applyFill(position, side, qty, fillPrice, symbol.commission * qty, leverage);
+
+  return {
+    position: {
+      ...emptyPosition(),
+      realizedPnl: result.position.realizedPnl,
+    },
+    fills: [
+      {
+        id: Date.now() + 13,
+        side,
+        quantity: qty,
+        price: fillPrice,
+        fee: symbol.commission * qty,
+        time: candle.time,
+        realizedPnl: result.realizedPnl,
+        reason: 'liquidation',
+      },
+    ],
+    liquidated: true,
+  };
+}
+
 export type CurrencyUnit = 'USDT' | 'CNY';
 
 /** 演示用固定汇率，便于 USDT / 人民币切换展示 */
@@ -616,7 +665,10 @@ export function computeStats(fills: Fill[], startCapital: number): SessionStats 
     maxDrawdown = Math.max(maxDrawdown, peak - equity);
 
     const isExit =
-      fill.reason === 'close' || fill.reason === 'takeProfit' || fill.reason === 'stopLoss';
+      fill.reason === 'close' ||
+      fill.reason === 'takeProfit' ||
+      fill.reason === 'stopLoss' ||
+      fill.reason === 'liquidation';
     if (!isExit) continue;
 
     if (fill.realizedPnl > 0) {

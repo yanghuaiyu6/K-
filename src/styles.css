@@ -310,6 +310,30 @@ input, select {
   font-weight: 700;
   white-space: nowrap;
 }
+.overlay-toggles {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  padding: 0 10px 6px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+.overlay-toggles button {
+  flex: none;
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: #101821;
+  border: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 700;
+}
+.overlay-toggles button.active {
+  color: #161616;
+  background: linear-gradient(145deg, #ffd15a, #f5b301);
+  border-color: transparent;
+}
 .tf-row { flex-wrap: nowrap; overflow: hidden; }
 .tf-row button { min-height: 30px; padding: 0 10px; font-size: 12px; }
 .quote-mini {
@@ -872,22 +896,39 @@ input, select {
 .toast {
   position: fixed;
   left: 50%;
-  top: calc(10px + var(--safe-top));
+  top: calc(8px + var(--safe-top));
   right: auto;
   bottom: auto;
   z-index: 60;
   width: max-content;
-  max-width: min(86vw, 340px);
+  max-width: min(80vw, 280px);
   transform: translateX(-50%);
-  padding: 7px 12px;
+  padding: 6px 10px;
   border-radius: 999px;
-  background: rgba(24, 35, 49, 0.92);
+  background: rgba(24, 35, 49, 0.88);
   border: 1px solid var(--line);
-  box-shadow: 0 8px 20px rgba(0,0,0,.28);
-  font-size: 12px;
+  box-shadow: none;
+  font-size: 11px;
   font-weight: 700;
   text-align: center;
   pointer-events: none;
+}
+.report-banner {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(231, 76, 60, 0.35);
+  background: rgba(231, 76, 60, 0.12);
+}
+.report-banner.danger strong {
+  color: #ff8f84;
+  font-size: 16px;
+}
+.report-banner span {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .report-screen { padding: calc(14px + var(--safe-top)) 16px calc(16px + var(--safe-bottom)); gap: 12px; }

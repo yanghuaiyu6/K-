@@ -24,6 +24,13 @@ interface ChartPaneProps {
   fills: Fill[];
   orders: PendingOrder[];
   position: Position;
+  liquidationPrice?: number | null;
+  overlays?: {
+    cost: boolean;
+    liquidation: boolean;
+    protective: boolean;
+    orders: boolean;
+  };
   pickMode?: 'price' | 'bar' | null;
   onPickPrice?: (price: number) => void;
   onPickBar?: (timeMs: number) => void;
@@ -64,6 +71,8 @@ export function ChartPane({
   fills,
   orders,
   position,
+  liquidationPrice = null,
+  overlays = { cost: true, liquidation: true, protective: true, orders: true },
   pickMode = null,
   onPickPrice,
   onPickBar,
@@ -298,15 +307,25 @@ export function ChartPane({
       );
     };
 
-    addLine(visible.at(-1)!.close, '#f59e0b', symbol.code);
-    if (position.takeProfit != null) addLine(position.takeProfit, '#2ecc71', '止盈');
-    if (position.stopLoss != null) addLine(position.stopLoss, '#e74c3c', '止损');
-    for (const order of orders) {
-      addLine(order.price, order.side === 'buy' ? '#58d68d' : '#f1948a', order.type === 'limit' ? '限价' : '止损单');
+    addLine(visible.at(-1)!.close, '#f59e0b', '最新');
+    if (overlays.cost && position.quantity !== 0 && position.averagePrice > 0) {
+      addLine(position.averagePrice, '#5dade2', '成本');
+    }
+    if (overlays.liquidation && liquidationPrice != null && position.quantity !== 0) {
+      addLine(liquidationPrice, '#c39bd3', '强平');
+    }
+    if (overlays.protective) {
+      if (position.takeProfit != null) addLine(position.takeProfit, '#2ecc71', '止盈');
+      if (position.stopLoss != null) addLine(position.stopLoss, '#e74c3c', '止损');
+    }
+    if (overlays.orders) {
+      for (const order of orders) {
+        addLine(order.price, order.side === 'buy' ? '#58d68d' : '#f1948a', order.type === 'limit' ? '限价' : '止损单');
+      }
     }
 
     chartRef.current?.timeScale().scrollToRealTime();
-  }, [candles, playhead, fills, orders, position, symbol.code]);
+  }, [candles, playhead, fills, orders, position, symbol.code, liquidationPrice, overlays]);
 
   const latestMacd = computeMacd(candles.slice(0, playhead + 1)).at(-1);
 
