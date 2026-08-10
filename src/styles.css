@@ -235,7 +235,7 @@ input, select {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
-  padding: 6px 10px;
+  padding: 4px 10px;
   border-bottom: 1px solid var(--line);
   background: rgba(12, 19, 27, 0.96);
 }
@@ -274,11 +274,10 @@ input, select {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding-bottom: var(--safe-bottom);
 }
 .chart-stack {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 auto;
+  min-height: 42dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -296,11 +295,17 @@ input, select {
   justify-content: space-between;
   gap: 8px;
   align-items: center;
-  padding: 6px 10px 4px;
+  padding: 4px 10px 2px;
+}
+.chart-head-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex: none;
 }
 .sheet-chip {
   flex: none;
-  min-height: 28px;
+  min-height: 26px;
   padding: 0 10px;
   border-radius: 999px;
   color: var(--amber-2);
@@ -309,6 +314,11 @@ input, select {
   font-size: 11px;
   font-weight: 700;
   white-space: nowrap;
+}
+.sheet-chip.active {
+  color: #161616;
+  background: linear-gradient(145deg, #ffd15a, #f5b301);
+  border-color: transparent;
 }
 .overlay-toggles {
   flex: none;
@@ -555,12 +565,24 @@ input, select {
 .macd-mini span:first-child { color: var(--amber-2); font-weight: 700; }
 
 .trade-panel {
-  flex: none;
+  flex: 0 0 auto;
+  max-height: min(46dvh, 420px);
   display: grid;
-  gap: 8px;
+  gap: 6px;
+  align-content: start;
   padding: 8px 10px calc(8px + var(--safe-bottom));
   border-top: 1px solid var(--line);
   background: rgba(10, 15, 22, 0.98);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.trade-panel.is-compact {
+  max-height: min(38dvh, 320px);
+}
+.trade-panel.is-expanded {
+  max-height: min(48dvh, 460px);
 }
 .pos-strip {
   display: grid;
@@ -573,6 +595,20 @@ input, select {
   border: 1px solid var(--line);
   font-size: 12px;
 }
+.pos-strip.slim {
+  grid-template-columns: 1fr auto auto auto;
+  gap: 6px;
+  padding: 6px 8px;
+  min-height: 0;
+}
+.pos-strip.slim .ghost-link {
+  color: var(--amber-2);
+  font-size: 11px;
+  font-weight: 700;
+  min-height: 26px;
+  padding: 0 6px;
+  background: transparent;
+}
 .pos-strip button {
   min-height: 28px;
   padding: 0 10px;
@@ -580,6 +616,29 @@ input, select {
   color: #ffd7d3;
   background: rgba(231, 76, 60, 0.18);
   font-weight: 700;
+}
+.trade-extra {
+  display: grid;
+  gap: 8px;
+  padding-top: 2px;
+}
+.more-toggle {
+  color: var(--amber-2) !important;
+  font-weight: 800;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  min-width: auto;
+}
+.margin-line.compact {
+  align-items: center;
+}
+.replay-meta {
+  margin-left: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 .trade-toolbar {
   display: grid;
@@ -1139,13 +1198,14 @@ input, select {
 }
 .chart-frame {
   position: relative;
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 auto;
+  min-height: 220px;
   display: flex;
   flex-direction: column;
 }
 .chart-frame .chart-pane-wrap {
   flex: 1;
+  min-height: 180px;
 }
 .loading-overlay {
   position: fixed;
@@ -1264,9 +1324,17 @@ input, select {
   .chart-stack {
     flex: 1.45;
     min-width: 0;
+    min-height: 0;
   }
-  .trade-panel {
+  .chart-frame,
+  .chart-frame .chart-pane-wrap {
+    min-height: 0;
+  }
+  .trade-panel,
+  .trade-panel.is-compact,
+  .trade-panel.is-expanded {
     width: min(380px, 36vw);
+    max-height: none;
     flex: none;
     border-top: none;
     border-left: 1px solid var(--line);

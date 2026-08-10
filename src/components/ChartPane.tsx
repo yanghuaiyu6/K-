@@ -211,7 +211,7 @@ export function ChartPane({
       1,
     );
 
-    chart.panes()[1]?.setHeight(Math.max(96, Math.round(containerRef.current.clientHeight * 0.28)));
+    chart.panes()[1]?.setHeight(Math.max(72, Math.round(containerRef.current.clientHeight * 0.22)));
     chart.priceScale('macd', 1).applyOptions({
       scaleMargins: { top: 0.12, bottom: 0.08 },
       borderVisible: false,
@@ -247,7 +247,7 @@ export function ChartPane({
         width: containerRef.current.clientWidth,
         height,
       });
-      chartRef.current.panes()[1]?.setHeight(Math.max(96, Math.round(height * 0.28)));
+      chartRef.current.panes()[1]?.setHeight(Math.max(72, Math.round(height * 0.22)));
     });
     observer.observe(containerRef.current);
 

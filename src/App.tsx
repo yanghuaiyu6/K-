@@ -27,7 +27,6 @@ import {
   calcTradingFee,
   canAffordOrder,
   clampReplayOffset,
-  computeMacd,
   computeStats,
   emptyPosition,
   estimateLiquidationPrice,
@@ -178,6 +177,8 @@ export default function App() {
   const [toast, setToast] = useState('');
   const [pickMode, setPickMode] = useState<PickMode>(null);
   const [liquidated, setLiquidated] = useState(saved?.liquidated ?? false);
+  const [tradeExpanded, setTradeExpanded] = useState(false);
+  const [overlayMenuOpen, setOverlayMenuOpen] = useState(false);
   const [chartOverlays, setChartOverlays] = useState({
     cost: true,
     liquidation: true,
@@ -214,10 +215,6 @@ export default function App() {
   const displaySymbol = config.blindMode ? 'BLIND-USDT' : `${symbol.code}-USDT`;
   const stats = useMemo(() => computeStats(fills, config.startCapital), [fills, config.startCapital]);
   const equityPoints = useMemo(() => buildEquityCurve(fills, config.startCapital), [fills, config.startCapital]);
-  const macd = useMemo(
-    () => (candles.length ? computeMacd(candles.slice(0, playhead + 1)).at(-1) : undefined),
-    [candles, playhead],
-  );
   const maxOpen = maxAffordableQuantity(available, markPrice || 1, leverage);
   const hasActivity = position.quantity !== 0 || orders.length > 0 || fills.length > 0;
 
@@ -1124,31 +1121,42 @@ export default function App() {
                 </button>
               ))}
             </div>
-            <button type="button" className="sheet-chip" onClick={() => setSheetOpen(true)}>
-              持仓 {position.quantity === 0 ? 0 : Math.abs(position.quantity)}
-              {orders.length ? ` · 委托${orders.length}` : ''}
-            </button>
+            <div className="chart-head-actions">
+              <button
+                type="button"
+                className={`sheet-chip ${overlayMenuOpen ? 'active' : ''}`}
+                onClick={() => setOverlayMenuOpen((value) => !value)}
+              >
+                参考线
+              </button>
+              <button type="button" className="sheet-chip" onClick={() => setSheetOpen(true)}>
+                持仓 {position.quantity === 0 ? 0 : Math.abs(position.quantity)}
+                {orders.length ? ` · ${orders.length}` : ''}
+              </button>
+            </div>
           </div>
 
-          <div className="overlay-toggles" aria-label="图表参考线">
-            {(
-              [
-                ['cost', '成本价'],
-                ['liquidation', '强平价'],
-                ['protective', '止盈止损'],
-                ['orders', '挂单'],
-              ] as const
-            ).map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                className={chartOverlays[key] ? 'active' : ''}
-                onClick={() => setChartOverlays((value) => ({ ...value, [key]: !value[key] }))}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          {overlayMenuOpen && (
+            <div className="overlay-toggles" aria-label="图表参考线">
+              {(
+                [
+                  ['cost', '成本价'],
+                  ['liquidation', '强平价'],
+                  ['protective', '止盈止损'],
+                  ['orders', '挂单'],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  className={chartOverlays[key] ? 'active' : ''}
+                  onClick={() => setChartOverlays((value) => ({ ...value, [key]: !value[key] }))}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
 
           {pickMode && (
             <div className="pick-tip">
@@ -1237,29 +1245,20 @@ export default function App() {
                   ))}
                 </select>
               </label>
-            </div>
-            <div className="macd-mini">
-              <span>{current ? formatTime(current.time) : '—'}</span>
-              <span>{playhead + 1}/{candleCount || '—'}</span>
-              <span className={macd && macd.hist >= 0 ? 'up' : 'down'}>MACD {macd ? macd.hist.toFixed(2) : '—'}</span>
+              <span className="replay-meta">{current ? formatTime(current.time) : '—'}</span>
             </div>
           </div>
         </section>
 
-        <section className="trade-panel" aria-label="下单区">
+        <section className={`trade-panel ${tradeExpanded ? 'is-expanded' : 'is-compact'}`} aria-label="下单区">
           {position.quantity !== 0 && (
-            <div className="pos-strip extended">
-              <div className="pos-main">
-                <strong className={position.quantity > 0 ? 'up' : 'down'}>
-                  {position.quantity > 0 ? '多' : '空'} {Math.abs(position.quantity)}张 · {activeLeverage}x
-                </strong>
-                <span className={floating >= 0 ? 'up' : 'down'}>{money(floating)} ({roe.toFixed(2)}%)</span>
-              </div>
-              <div className="partial-row">
-                <button type="button" onClick={() => closePositionQty(0.25)}>平25%</button>
-                <button type="button" onClick={() => closePositionQty(0.5)}>平50%</button>
-                <button type="button" onClick={() => closePositionQty(1)}>全平</button>
-              </div>
+            <div className="pos-strip slim">
+              <strong className={position.quantity > 0 ? 'up' : 'down'}>
+                {position.quantity > 0 ? '多' : '空'} {Math.abs(position.quantity)}张 · {activeLeverage}x
+              </strong>
+              <span className={floating >= 0 ? 'up' : 'down'}>{money(floating)}</span>
+              <button type="button" className="ghost-link" onClick={() => setSheetOpen(true)}>详情</button>
+              <button type="button" onClick={() => closePositionQty(1)} disabled={liquidated}>全平</button>
             </div>
           )}
 
@@ -1297,21 +1296,6 @@ export default function App() {
             </label>
           </div>
 
-          <div className="qty-presets">
-            {[1, 2, 5, 10].map((n) => (
-              <button key={n} type="button" className={quantity === n ? 'active' : ''} onClick={() => setQuantity(n)}>
-                {n}张
-              </button>
-            ))}
-            <button
-              type="button"
-              className={quantity === Math.max(1, maxOpen) ? 'active' : ''}
-              onClick={() => setQuantity(Math.max(1, Math.min(MAX_QTY, maxOpen)))}
-            >
-              可开{Math.min(MAX_QTY, maxOpen)}
-            </button>
-          </div>
-
           {orderType !== 'market' && (
             <label className="field compact-field">
               <span>
@@ -1327,49 +1311,6 @@ export default function App() {
             </label>
           )}
 
-          <div className="tp-sl-grid compact">
-            <label>
-              <span>
-                止盈
-                <button type="button" onClick={() => setPickMode('tp')}>点图</button>
-              </span>
-              <input value={takeProfit} onChange={(event) => setTakeProfit(event.target.value)} placeholder="可选" inputMode="decimal" />
-            </label>
-            <label>
-              <span>
-                止损
-                <button type="button" onClick={() => setPickMode('sl')}>点图</button>
-              </span>
-              <input value={stopLoss} onChange={(event) => setStopLoss(event.target.value)} placeholder="可选" inputMode="decimal" />
-            </label>
-          </div>
-
-          {position.quantity !== 0 && (
-            <div className="protective-edit">
-              <label>
-                <span>持仓止盈</span>
-                <input value={editTp} onChange={(event) => setEditTp(event.target.value)} placeholder="空=清除" inputMode="decimal" />
-              </label>
-              <label>
-                <span>持仓止损</span>
-                <input value={editSl} onChange={(event) => setEditSl(event.target.value)} placeholder="空=清除" inputMode="decimal" />
-              </label>
-              <button type="button" onClick={applyPositionProtective}>改 TP/SL</button>
-            </div>
-          )}
-
-          <div className="margin-line">
-            <span>保证金 {money(orderMargin)}</span>
-            <span>可开 {Math.min(MAX_QTY, Math.max(0, maxOpen))}张</span>
-            <span>
-              预估手续费 {money(calcTradingFee(
-                orderType === 'market' ? (quotes.ask + quotes.bid) / 2 : Number(limitPrice) || markPrice,
-                quantity,
-                orderType === 'market' ? 'taker' : 'maker',
-              ))}
-            </span>
-          </div>
-
           <div className="order-actions compact">
             <button className="buy" onClick={() => placeOrder('buy')} disabled={liquidated}>
               <span>开多</span>
@@ -1383,7 +1324,83 @@ export default function App() {
               平仓
             </button>
           </div>
-          <p className="hotkey-hint">快捷键 Space 播放 · ←/→ 步进 · B 开多 · S 开空 · X 平仓</p>
+
+          <div className="margin-line compact">
+            <span>保证金 {money(orderMargin)}</span>
+            <span>可开 {Math.min(MAX_QTY, Math.max(0, maxOpen))}张</span>
+            <button type="button" className="more-toggle" onClick={() => setTradeExpanded((value) => !value)}>
+              {tradeExpanded ? '收起选项' : '更多选项'}
+            </button>
+          </div>
+
+          {tradeExpanded && (
+            <div className="trade-extra">
+              <div className="qty-presets">
+                {[1, 2, 5, 10].map((n) => (
+                  <button key={n} type="button" className={quantity === n ? 'active' : ''} onClick={() => setQuantity(n)}>
+                    {n}张
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className={quantity === Math.max(1, maxOpen) ? 'active' : ''}
+                  onClick={() => setQuantity(Math.max(1, Math.min(MAX_QTY, maxOpen)))}
+                >
+                  可开{Math.min(MAX_QTY, maxOpen)}
+                </button>
+              </div>
+
+              <div className="tp-sl-grid compact">
+                <label>
+                  <span>
+                    止盈
+                    <button type="button" onClick={() => setPickMode('tp')}>点图</button>
+                  </span>
+                  <input value={takeProfit} onChange={(event) => setTakeProfit(event.target.value)} placeholder="可选" inputMode="decimal" />
+                </label>
+                <label>
+                  <span>
+                    止损
+                    <button type="button" onClick={() => setPickMode('sl')}>点图</button>
+                  </span>
+                  <input value={stopLoss} onChange={(event) => setStopLoss(event.target.value)} placeholder="可选" inputMode="decimal" />
+                </label>
+              </div>
+
+              {position.quantity !== 0 && (
+                <div className="protective-edit">
+                  <label>
+                    <span>持仓止盈</span>
+                    <input value={editTp} onChange={(event) => setEditTp(event.target.value)} placeholder="空=清除" inputMode="decimal" />
+                  </label>
+                  <label>
+                    <span>持仓止损</span>
+                    <input value={editSl} onChange={(event) => setEditSl(event.target.value)} placeholder="空=清除" inputMode="decimal" />
+                  </label>
+                  <button type="button" onClick={applyPositionProtective}>改 TP/SL</button>
+                </div>
+              )}
+
+              {position.quantity !== 0 && (
+                <div className="partial-row">
+                  <button type="button" onClick={() => closePositionQty(0.25)}>平25%</button>
+                  <button type="button" onClick={() => closePositionQty(0.5)}>平50%</button>
+                  <button type="button" onClick={() => closePositionQty(1)}>全平</button>
+                </div>
+              )}
+
+              <div className="margin-line">
+                <span>
+                  预估手续费 {money(calcTradingFee(
+                    orderType === 'market' ? (quotes.ask + quotes.bid) / 2 : Number(limitPrice) || markPrice,
+                    quantity,
+                    orderType === 'market' ? 'taker' : 'maker',
+                  ))}
+                </span>
+                <span>{priceText(quotes.bid)} / {priceText(quotes.ask)}</span>
+              </div>
+            </div>
+          )}
         </section>
       </main>
 
