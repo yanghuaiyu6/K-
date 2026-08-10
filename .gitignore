@@ -1,0 +1,12 @@
+node_modules
+dist
+.tmp
+*.tsbuildinfo
+.env.local
+.env.*.local
+android/local.properties
+android/.gradle/
+android/**/build/
+.idea/
+*.iml
+.DS_Store

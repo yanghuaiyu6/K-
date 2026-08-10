@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">复盘交易室</string>
+    <string name="title_activity_main">复盘交易室</string>
+    <string name="package_name">com.replaytrader.cn</string>
+    <string name="custom_url_scheme">com.replaytrader.cn</string>
+</resources>
