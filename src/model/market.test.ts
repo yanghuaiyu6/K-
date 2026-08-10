@@ -1,6 +1,9 @@
 import { equal } from '../test/assert';
 import {
   applyFill,
+  applyFunding,
+  applySlippage,
+  canAffordOrder,
   computeMacd,
   emptyPosition,
   estimateLiquidationPrice,
@@ -14,6 +17,7 @@ import {
   matchLiquidation,
   matchPendingOrders,
   matchProtectiveOrders,
+  maxAffordableQuantity,
   maxReplayOffset,
   minReplayOffset,
   pickRandomStartOffset,
@@ -21,6 +25,7 @@ import {
   toDisplayAmount,
   unrealizedPnl,
   unrealizedRoe,
+  updateProtectiveLevels,
 } from './market';
 
 export const tests = [
@@ -165,6 +170,65 @@ export const tests = [
       equal(Number.isFinite(macd.at(-1)!.dif), true);
       equal(Number.isFinite(macd.at(-1)!.dea), true);
       equal(Number.isFinite(macd.at(-1)!.hist), true);
+    },
+  },
+  {
+    name: 'applySlippage widens market buys and leaves limit fills unchanged',
+    run() {
+      const symbol = getSymbol('NAS100');
+      const marketBuy = applySlippage(100, 'buy', symbol, 'market');
+      const marketSell = applySlippage(100, 'sell', symbol, 'market');
+      const limitBuy = applySlippage(100, 'buy', symbol, 'limit');
+      equal(marketBuy, 100 + symbol.tickSize);
+      equal(marketSell, 100 - symbol.tickSize);
+      equal(limitBuy, 100);
+    },
+  },
+  {
+    name: 'canAffordOrder and maxAffordableQuantity enforce margin budget',
+    run() {
+      equal(canAffordOrder(100, 100, 10, 10), true);
+      equal(canAffordOrder(100, 100, 11, 10), false);
+      equal(maxAffordableQuantity(1000, 100, 10), 100);
+      equal(maxAffordableQuantity(0, 100, 10), 0);
+    },
+  },
+  {
+    name: 'applyFunding charges longs and credits shorts on notional',
+    run() {
+      const long = {
+        quantity: 2,
+        averagePrice: 100,
+        realizedPnl: 0,
+        takeProfit: null,
+        stopLoss: null,
+        leverage: 10,
+      };
+      const longResult = applyFunding(long, 100, 0.0001);
+      equal(longResult.funding < 0, true);
+      equal(longResult.position.realizedPnl, longResult.funding);
+
+      const short = { ...long, quantity: -2 };
+      const shortResult = applyFunding(short, 100, 0.0001);
+      equal(shortResult.funding > 0, true);
+      equal(shortResult.position.realizedPnl, shortResult.funding);
+    },
+  },
+  {
+    name: 'updateProtectiveLevels only mutates open positions',
+    run() {
+      equal(updateProtectiveLevels(emptyPosition(), 110, 90).quantity, 0);
+      const open = {
+        quantity: 1,
+        averagePrice: 100,
+        realizedPnl: 0,
+        takeProfit: null,
+        stopLoss: null,
+        leverage: 10,
+      };
+      const next = updateProtectiveLevels(open, 120, 95);
+      equal(next.takeProfit, 120);
+      equal(next.stopLoss, 95);
     },
   },
 ];

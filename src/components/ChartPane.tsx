@@ -64,6 +64,20 @@ function movingAverage(candles: Candle[], period = 20): LineData<Time>[] {
   return points;
 }
 
+function emaLine(candles: Candle[], period = 60): LineData<Time>[] {
+  if (candles.length === 0) return [];
+  const multiplier = 2 / (period + 1);
+  const points: LineData<Time>[] = [];
+  let ema = candles[0].close;
+  candles.forEach((candle, index) => {
+    ema = index === 0 ? candle.close : (candle.close - ema) * multiplier + ema;
+    if (index >= period - 1) {
+      points.push({ time: Math.floor(candle.time / 1000) as Time, value: ema });
+    }
+  });
+  return points;
+}
+
 export function ChartPane({
   candles,
   playhead,
@@ -82,6 +96,7 @@ export function ChartPane({
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const maSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const emaSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const macdHistRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const macdDifRef = useRef<ISeriesApi<'Line'> | null>(null);
   const macdDeaRef = useRef<ISeriesApi<'Line'> | null>(null);
@@ -158,6 +173,12 @@ export function ChartPane({
       priceLineVisible: false,
       lastValueVisible: false,
     });
+    const emaSeries = chart.addSeries(LineSeries, {
+      color: '#f5b301',
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
 
     const macdHist = chart.addSeries(
       HistogramSeries,
@@ -200,6 +221,7 @@ export function ChartPane({
     candleSeriesRef.current = candleSeries;
     volumeSeriesRef.current = volumeSeries;
     maSeriesRef.current = maSeries;
+    emaSeriesRef.current = emaSeries;
     macdHistRef.current = macdHist;
     macdDifRef.current = macdDif;
     macdDeaRef.current = macdDea;
@@ -246,6 +268,7 @@ export function ChartPane({
       !series ||
       !volumeSeriesRef.current ||
       !maSeriesRef.current ||
+      !emaSeriesRef.current ||
       !macdHistRef.current ||
       !macdDifRef.current ||
       !macdDeaRef.current ||
@@ -256,7 +279,8 @@ export function ChartPane({
 
     series.setData(toCandleData(visible));
     volumeSeriesRef.current.setData(toVolumeData(visible));
-    maSeriesRef.current.setData(movingAverage(visible));
+    maSeriesRef.current.setData(movingAverage(visible, 20));
+    emaSeriesRef.current.setData(emaLine(visible, 60));
 
     const macd = computeMacd(visible);
     macdHistRef.current.setData(

@@ -308,6 +308,53 @@ export function marketQuotes(symbol: MarketSymbol, mid: number) {
   };
 }
 
+/** 市价/止损成交滑点（按 tick），限价按委托价 */
+export function applySlippage(
+  price: number,
+  side: Side,
+  symbol: MarketSymbol,
+  kind: 'market' | 'limit' | 'stop' | 'takeProfit' | 'stopLoss' | 'liquidation' | 'close' = 'market',
+) {
+  if (kind === 'limit' || kind === 'takeProfit') return roundToTick(price, symbol.tickSize);
+  const ticks = kind === 'stop' || kind === 'stopLoss' || kind === 'liquidation' ? 2 : 1;
+  const slip = ticks * symbol.tickSize;
+  const raw = side === 'buy' ? price + slip : price - slip;
+  return roundToTick(Math.max(symbol.tickSize, raw), symbol.tickSize);
+}
+
+export function maxAffordableQuantity(available: number, price: number, leverage: number) {
+  if (available <= 0 || price <= 0 || leverage <= 0) return 0;
+  return Math.floor((available * leverage) / price);
+}
+
+export function canAffordOrder(available: number, price: number, quantity: number, leverage: number) {
+  return positionMargin(price, quantity, leverage) <= available + 1e-9;
+}
+
+export function updateProtectiveLevels(
+  position: Position,
+  takeProfit: number | null,
+  stopLoss: number | null,
+): Position {
+  if (position.quantity === 0) return position;
+  return { ...position, takeProfit, stopLoss };
+}
+
+/** 简化资金费率：每 N 根 K 按名义价值收取/支付（多付空收为正费率） */
+export function applyFunding(
+  position: Position,
+  markPrice: number,
+  rate = 0.0001,
+): { position: Position; funding: number } {
+  if (position.quantity === 0) return { position, funding: 0 };
+  const notional = contractNotional(markPrice, position.quantity);
+  const funding = position.quantity > 0 ? -notional * rate : notional * rate;
+  return {
+    position: { ...position, realizedPnl: position.realizedPnl + funding },
+    funding,
+  };
+}
+
 export function applyFill(
   position: Position,
   side: Side,
@@ -387,11 +434,17 @@ export function matchPendingOrders(
       continue;
     }
 
+    const fillPrice = applySlippage(
+      order.price,
+      order.side,
+      symbol,
+      order.type === 'limit' ? 'limit' : 'stop',
+    );
     const result = applyFill(
       nextPosition,
       order.side,
       order.quantity,
-      order.price,
+      fillPrice,
       symbol.commission * order.quantity,
       order.leverage || nextPosition.leverage || 10,
     );
@@ -404,7 +457,7 @@ export function matchPendingOrders(
       id: Date.now() + fills.length,
       side: order.side,
       quantity: order.quantity,
-      price: order.price,
+      price: fillPrice,
       fee: symbol.commission * order.quantity,
       time: candle.time,
       realizedPnl: result.realizedPnl,
@@ -430,12 +483,13 @@ export function matchProtectiveOrders(
     const hit = isLong ? candle.low <= position.stopLoss : candle.high >= position.stopLoss;
     if (hit) {
       const side: Side = isLong ? 'sell' : 'buy';
-      const result = applyFill(next, side, Math.abs(next.quantity), position.stopLoss, symbol.commission * Math.abs(next.quantity));
+      const fillPrice = applySlippage(position.stopLoss, side, symbol, 'stopLoss');
+      const result = applyFill(next, side, Math.abs(next.quantity), fillPrice, symbol.commission * Math.abs(next.quantity));
       fills.push({
         id: Date.now() + 11,
         side,
         quantity: Math.abs(position.quantity),
-        price: position.stopLoss,
+        price: fillPrice,
         fee: symbol.commission * Math.abs(position.quantity),
         time: candle.time,
         realizedPnl: result.realizedPnl,
@@ -449,12 +503,13 @@ export function matchProtectiveOrders(
     const hit = isLong ? candle.high >= position.takeProfit : candle.low <= position.takeProfit;
     if (hit) {
       const side: Side = isLong ? 'sell' : 'buy';
-      const result = applyFill(next, side, Math.abs(next.quantity), position.takeProfit, symbol.commission * Math.abs(next.quantity));
+      const fillPrice = applySlippage(position.takeProfit, side, symbol, 'takeProfit');
+      const result = applyFill(next, side, Math.abs(next.quantity), fillPrice, symbol.commission * Math.abs(next.quantity));
       fills.push({
         id: Date.now() + 12,
         side,
         quantity: Math.abs(position.quantity),
-        price: position.takeProfit,
+        price: fillPrice,
         fee: symbol.commission * Math.abs(position.quantity),
         time: candle.time,
         realizedPnl: result.realizedPnl,
@@ -492,7 +547,7 @@ export function matchLiquidation(
 
   const side: Side = isLong ? 'sell' : 'buy';
   const qty = Math.abs(position.quantity);
-  const fillPrice = roundToTick(liqPrice, symbol.tickSize);
+  const fillPrice = applySlippage(roundToTick(liqPrice, symbol.tickSize), side, symbol, 'liquidation');
   const result = applyFill(position, side, qty, fillPrice, symbol.commission * qty, leverage);
 
   return {
@@ -528,23 +583,27 @@ export function toDisplayAmount(usdtValue: number, unit: CurrencyUnit) {
 }
 
 export function formatPrice(price: number, symbol: MarketSymbol, unit: CurrencyUnit = 'USDT') {
-  const scaled = toDisplayAmount(price, unit);
+  // 外汇报价本身是汇率，不乘人民币换算，避免误导
+  const convert = unit === 'CNY' && symbol.category !== '外汇';
+  const scaled = convert ? toDisplayAmount(price, 'CNY') : price;
   const decimals =
-    unit === 'CNY'
-      ? symbol.tickSize >= 1
-        ? 2
-        : 2
-      : symbol.tickSize >= 1
+    symbol.category === '外汇'
+      ? symbol.tickSize >= 0.01
+        ? 3
+        : 5
+      : convert || symbol.tickSize >= 1
         ? 2
         : symbol.tickSize >= 0.1
           ? 1
           : symbol.tickSize >= 0.01
             ? 2
             : 4;
-  return scaled.toLocaleString('zh-CN', {
+  const text = scaled.toLocaleString('zh-CN', {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });
+  if (unit === 'CNY' && convert) return text;
+  return text;
 }
 
 export function formatMoney(value: number, unit: CurrencyUnit = 'USDT') {
