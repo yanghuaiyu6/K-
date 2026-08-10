@@ -24,13 +24,16 @@ import {
   applyFill,
   applyFunding,
   applySlippage,
+  calcTradingFee,
   canAffordOrder,
   clampReplayOffset,
   computeMacd,
   computeStats,
   emptyPosition,
   estimateLiquidationPrice,
+  feeRoleForFill,
   findCandleIndexByTime,
+  formatFeeRate,
   formatMoney,
   formatPrice,
   formatTime,
@@ -44,6 +47,7 @@ import {
   maxAffordableQuantity,
   maxReplayOffset,
   minReplayOffset,
+  OKX_REGULAR_SWAP_FEES,
   pickRandomStartOffset,
   positionMargin,
   resolveStartOffset,
@@ -624,7 +628,8 @@ export default function App() {
       return;
     }
 
-    const result = applyFill(position, side, qty, price, symbol.commission * qty, leverage);
+    const fee = calcTradingFee(price, qty, feeRoleForFill('market'));
+    const result = applyFill(position, side, qty, price, fee, leverage);
     setPosition({
       ...result.position,
       takeProfit: tp ?? result.position.takeProfit,
@@ -640,7 +645,7 @@ export default function App() {
         side,
         quantity: qty,
         price,
-        fee: symbol.commission * qty,
+        fee,
         time: current.time,
         realizedPnl: result.realizedPnl,
         reason: 'market',
@@ -659,7 +664,8 @@ export default function App() {
       qtyRatio >= 1 ? absQty : Math.max(1, Math.floor(absQty * qtyRatio));
     const raw = side === 'buy' ? quotes.ask : quotes.bid;
     const price = applySlippage(raw, side, symbol, 'close');
-    const result = applyFill(position, side, qty, price, symbol.commission * qty, position.leverage);
+    const fee = calcTradingFee(price, qty, feeRoleForFill('close'));
+    const result = applyFill(position, side, qty, price, fee, position.leverage);
     const nextPos = qty >= absQty ? emptyPosition() : result.position;
     setPosition(nextPos);
     if (nextPos.quantity === 0) fundingBaseRef.current = null;
@@ -669,7 +675,7 @@ export default function App() {
         side,
         quantity: qty,
         price,
-        fee: symbol.commission * qty,
+        fee,
         time: current.time,
         realizedPnl: result.realizedPnl,
         reason: 'close',
@@ -943,7 +949,7 @@ export default function App() {
 
           <div className="setup-meta">
             <span>点差 {priceText(symbol.spreadTicks * symbol.tickSize)}</span>
-            <span>手续费 {money(symbol.commission)}</span>
+            <span>手续费 {OKX_REGULAR_SWAP_FEES.label} Maker {formatFeeRate('maker')} / Taker {formatFeeRate('taker')}</span>
             <span>1 USDT ≈ {USDT_CNY_RATE} ¥</span>
             <span>源 {feedModeLabel}</span>
           </div>
@@ -1355,7 +1361,13 @@ export default function App() {
           <div className="margin-line">
             <span>保证金 {money(orderMargin)}</span>
             <span>可开 {Math.min(MAX_QTY, Math.max(0, maxOpen))}张</span>
-            <span>{priceText(quotes.bid)} / {priceText(quotes.ask)}</span>
+            <span>
+              预估手续费 {money(calcTradingFee(
+                orderType === 'market' ? (quotes.ask + quotes.bid) / 2 : Number(limitPrice) || markPrice,
+                quantity,
+                orderType === 'market' ? 'taker' : 'maker',
+              ))}
+            </span>
           </div>
 
           <div className="order-actions compact">

@@ -8,7 +8,6 @@ export interface MarketSymbol {
   category: string;
   tickSize: number;
   spreadTicks: number;
-  commission: number;
   basePrice: number;
   volatility: number;
 }
@@ -80,22 +79,22 @@ export interface SessionConfig {
 }
 
 export const SYMBOLS: MarketSymbol[] = [
-  { code: 'EURUSD', name: '欧元 / 美元', category: '外汇', tickSize: 0.0001, spreadTicks: 8, commission: 0.7, basePrice: 1.0842, volatility: 0.00042 },
-  { code: 'GBPUSD', name: '英镑 / 美元', category: '外汇', tickSize: 0.0001, spreadTicks: 10, commission: 0.7, basePrice: 1.2688, volatility: 0.00055 },
-  { code: 'USDJPY', name: '美元 / 日元', category: '外汇', tickSize: 0.001, spreadTicks: 9, commission: 0.7, basePrice: 156.42, volatility: 0.055 },
-  { code: 'AUDUSD', name: '澳元 / 美元', category: '外汇', tickSize: 0.0001, spreadTicks: 9, commission: 0.7, basePrice: 0.6624, volatility: 0.00048 },
-  { code: 'USDCNH', name: '美元 / 离岸人民币', category: '外汇', tickSize: 0.0001, spreadTicks: 12, commission: 0.8, basePrice: 7.245, volatility: 0.0042 },
-  { code: 'XAUUSD', name: '黄金 / 美元', category: '商品', tickSize: 0.1, spreadTicks: 18, commission: 1.2, basePrice: 2348, volatility: 1.8 },
-  { code: 'XAGUSD', name: '白银 / 美元', category: '商品', tickSize: 0.001, spreadTicks: 20, commission: 1.0, basePrice: 29.45, volatility: 0.12 },
-  { code: 'WTIUSD', name: '美原油', category: '商品', tickSize: 0.01, spreadTicks: 14, commission: 1.1, basePrice: 78.35, volatility: 0.42 },
-  { code: 'NAS100', name: '纳斯达克100', category: '指数', tickSize: 0.25, spreadTicks: 4, commission: 1.5, basePrice: 18425, volatility: 18 },
-  { code: 'US500', name: '标普500', category: '指数', tickSize: 0.25, spreadTicks: 4, commission: 1.2, basePrice: 5286, volatility: 5.5 },
-  { code: 'GER40', name: '德国DAX40', category: '指数', tickSize: 0.5, spreadTicks: 5, commission: 1.3, basePrice: 18240, volatility: 16 },
-  { code: 'HK50', name: '恒生指数', category: '指数', tickSize: 1, spreadTicks: 8, commission: 1.4, basePrice: 17680, volatility: 42 },
-  { code: 'BTCUSD', name: '比特币 / 美元', category: '加密', tickSize: 0.5, spreadTicks: 20, commission: 2.5, basePrice: 67240, volatility: 95 },
-  { code: 'ETHUSD', name: '以太坊 / 美元', category: '加密', tickSize: 0.05, spreadTicks: 20, commission: 2.0, basePrice: 3488, volatility: 18 },
-  { code: 'SOLUSD', name: 'Solana / 美元', category: '加密', tickSize: 0.01, spreadTicks: 18, commission: 1.8, basePrice: 148.6, volatility: 2.4 },
-  { code: 'BNBUSD', name: 'BNB / 美元', category: '加密', tickSize: 0.01, spreadTicks: 16, commission: 1.6, basePrice: 582.4, volatility: 3.2 },
+  { code: 'EURUSD', name: '欧元 / 美元', category: '外汇', tickSize: 0.0001, spreadTicks: 8, basePrice: 1.0842, volatility: 0.00042 },
+  { code: 'GBPUSD', name: '英镑 / 美元', category: '外汇', tickSize: 0.0001, spreadTicks: 10, basePrice: 1.2688, volatility: 0.00055 },
+  { code: 'USDJPY', name: '美元 / 日元', category: '外汇', tickSize: 0.001, spreadTicks: 9, basePrice: 156.42, volatility: 0.055 },
+  { code: 'AUDUSD', name: '澳元 / 美元', category: '外汇', tickSize: 0.0001, spreadTicks: 9, basePrice: 0.6624, volatility: 0.00048 },
+  { code: 'USDCNH', name: '美元 / 离岸人民币', category: '外汇', tickSize: 0.0001, spreadTicks: 12, basePrice: 7.245, volatility: 0.0042 },
+  { code: 'XAUUSD', name: '黄金 / 美元', category: '商品', tickSize: 0.1, spreadTicks: 18, basePrice: 2348, volatility: 1.8 },
+  { code: 'XAGUSD', name: '白银 / 美元', category: '商品', tickSize: 0.001, spreadTicks: 20, basePrice: 29.45, volatility: 0.12 },
+  { code: 'WTIUSD', name: '美原油', category: '商品', tickSize: 0.01, spreadTicks: 14, basePrice: 78.35, volatility: 0.42 },
+  { code: 'NAS100', name: '纳斯达克100', category: '指数', tickSize: 0.25, spreadTicks: 4, basePrice: 18425, volatility: 18 },
+  { code: 'US500', name: '标普500', category: '指数', tickSize: 0.25, spreadTicks: 4, basePrice: 5286, volatility: 5.5 },
+  { code: 'GER40', name: '德国DAX40', category: '指数', tickSize: 0.5, spreadTicks: 5, basePrice: 18240, volatility: 16 },
+  { code: 'HK50', name: '恒生指数', category: '指数', tickSize: 1, spreadTicks: 8, basePrice: 17680, volatility: 42 },
+  { code: 'BTCUSD', name: '比特币 / 美元', category: '加密', tickSize: 0.5, spreadTicks: 20, basePrice: 67240, volatility: 95 },
+  { code: 'ETHUSD', name: '以太坊 / 美元', category: '加密', tickSize: 0.05, spreadTicks: 20, basePrice: 3488, volatility: 18 },
+  { code: 'SOLUSD', name: 'Solana / 美元', category: '加密', tickSize: 0.01, spreadTicks: 18, basePrice: 148.6, volatility: 2.4 },
+  { code: 'BNBUSD', name: 'BNB / 美元', category: '加密', tickSize: 0.01, spreadTicks: 16, basePrice: 582.4, volatility: 3.2 },
 ];
 
 /** TradingView 风格多段历史数据源（本地模拟长序列） */
@@ -440,12 +439,13 @@ export function matchPendingOrders(
       symbol,
       order.type === 'limit' ? 'limit' : 'stop',
     );
+    const fee = calcTradingFee(fillPrice, order.quantity, feeRoleForFill(order.type));
     const result = applyFill(
       nextPosition,
       order.side,
       order.quantity,
       fillPrice,
-      symbol.commission * order.quantity,
+      fee,
       order.leverage || nextPosition.leverage || 10,
     );
     nextPosition = {
@@ -458,7 +458,7 @@ export function matchPendingOrders(
       side: order.side,
       quantity: order.quantity,
       price: fillPrice,
-      fee: symbol.commission * order.quantity,
+      fee,
       time: candle.time,
       realizedPnl: result.realizedPnl,
       reason: order.type,
@@ -484,13 +484,14 @@ export function matchProtectiveOrders(
     if (hit) {
       const side: Side = isLong ? 'sell' : 'buy';
       const fillPrice = applySlippage(position.stopLoss, side, symbol, 'stopLoss');
-      const result = applyFill(next, side, Math.abs(next.quantity), fillPrice, symbol.commission * Math.abs(next.quantity));
+      const fee = calcTradingFee(fillPrice, Math.abs(next.quantity), feeRoleForFill('stopLoss'));
+      const result = applyFill(next, side, Math.abs(next.quantity), fillPrice, fee);
       fills.push({
         id: Date.now() + 11,
         side,
         quantity: Math.abs(position.quantity),
         price: fillPrice,
-        fee: symbol.commission * Math.abs(position.quantity),
+        fee,
         time: candle.time,
         realizedPnl: result.realizedPnl,
         reason: 'stopLoss',
@@ -504,13 +505,14 @@ export function matchProtectiveOrders(
     if (hit) {
       const side: Side = isLong ? 'sell' : 'buy';
       const fillPrice = applySlippage(position.takeProfit, side, symbol, 'takeProfit');
-      const result = applyFill(next, side, Math.abs(next.quantity), fillPrice, symbol.commission * Math.abs(next.quantity));
+      const fee = calcTradingFee(fillPrice, Math.abs(next.quantity), feeRoleForFill('takeProfit'));
+      const result = applyFill(next, side, Math.abs(next.quantity), fillPrice, fee);
       fills.push({
         id: Date.now() + 12,
         side,
         quantity: Math.abs(position.quantity),
         price: fillPrice,
-        fee: symbol.commission * Math.abs(position.quantity),
+        fee,
         time: candle.time,
         realizedPnl: result.realizedPnl,
         reason: 'takeProfit',
@@ -548,7 +550,8 @@ export function matchLiquidation(
   const side: Side = isLong ? 'sell' : 'buy';
   const qty = Math.abs(position.quantity);
   const fillPrice = applySlippage(roundToTick(liqPrice, symbol.tickSize), side, symbol, 'liquidation');
-  const result = applyFill(position, side, qty, fillPrice, symbol.commission * qty, leverage);
+  const fee = calcTradingFee(fillPrice, qty, feeRoleForFill('liquidation'));
+  const result = applyFill(position, side, qty, fillPrice, fee, leverage);
 
   return {
     position: {
@@ -561,7 +564,7 @@ export function matchLiquidation(
         side,
         quantity: qty,
         price: fillPrice,
-        fee: symbol.commission * qty,
+        fee,
         time: candle.time,
         realizedPnl: result.realizedPnl,
         reason: 'liquidation',
@@ -626,6 +629,33 @@ export function unitLabel(unit: CurrencyUnit) {
 
 export function contractNotional(price: number, quantity: number) {
   return Math.abs(price * quantity);
+}
+
+/** OKX 普通用户（新手档）USDT 永续合约费率 */
+export const OKX_REGULAR_SWAP_FEES = {
+  label: 'OKX 普通用户',
+  maker: 0.0002, // 0.02%
+  taker: 0.0005, // 0.05%
+} as const;
+
+export type FeeRole = 'maker' | 'taker';
+
+export function feeRoleForFill(
+  reason: Fill['reason'] | Exclude<OrderType, 'market'> | 'market',
+): FeeRole {
+  // 限价挂单成交、止盈限价按 maker；市价/止损/强平/平仓按 taker
+  if (reason === 'limit' || reason === 'takeProfit') return 'maker';
+  return 'taker';
+}
+
+export function calcTradingFee(price: number, quantity: number, role: FeeRole) {
+  const rate = role === 'maker' ? OKX_REGULAR_SWAP_FEES.maker : OKX_REGULAR_SWAP_FEES.taker;
+  return contractNotional(price, quantity) * rate;
+}
+
+export function formatFeeRate(role: FeeRole) {
+  const rate = role === 'maker' ? OKX_REGULAR_SWAP_FEES.maker : OKX_REGULAR_SWAP_FEES.taker;
+  return `${(rate * 100).toFixed(2)}%`;
 }
 
 export function positionMargin(price: number, quantity: number, leverage: number) {

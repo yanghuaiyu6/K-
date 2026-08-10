@@ -3,11 +3,14 @@ import {
   applyFill,
   applyFunding,
   applySlippage,
+  calcTradingFee,
   canAffordOrder,
   computeMacd,
   emptyPosition,
   estimateLiquidationPrice,
+  feeRoleForFill,
   findCandleIndexByTime,
+  formatFeeRate,
   formatMoney,
   formatPrice,
   generateMarketData,
@@ -229,6 +232,17 @@ export const tests = [
       const next = updateProtectiveLevels(open, 120, 95);
       equal(next.takeProfit, 120);
       equal(next.stopLoss, 95);
+    },
+  },
+  {
+    name: 'OKX regular swap fees charge maker/taker percent of notional',
+    run() {
+      equal(calcTradingFee(100_000, 1, 'taker'), 50);
+      equal(calcTradingFee(100_000, 1, 'maker'), 20);
+      equal(feeRoleForFill('market'), 'taker');
+      equal(feeRoleForFill('limit'), 'maker');
+      equal(feeRoleForFill('stopLoss'), 'taker');
+      equal(formatFeeRate('taker'), '0.05%');
     },
   },
 ];
